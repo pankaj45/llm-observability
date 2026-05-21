@@ -49,10 +49,10 @@ Payload fields:
 - `conversationId`
 - `provider`
 - `model`
+- `status`
 - `streaming`
 - `inputMessageCount`
-- `requestedParameters`
-- `metadata`
+- `inputContentHash`
 
 ## Event: `inference.token_streamed`
 
@@ -86,7 +86,31 @@ Payload fields:
 - `totalTokens`
 - `cost`
 - `durationMs`
-- `firstTokenLatencyMs`
+
+## Phase 2 Required Lifecycle Events
+
+Phase 2 must implement and validate schemas for:
+
+- `inference.requested`
+- `inference.completed`
+- `inference.cancelled`
+- `inference.failed`
+
+Phase 2 should not publish `inference.token_streamed` by default unless token-level persistence and stream replay are explicitly approved.
+
+Phase 2 lifecycle events must not include raw prompt or completion content. They may include message counts, token counts, content hashes, provider/model identifiers, and timing metadata.
+
+Required lifecycle event fields:
+
+- `requestId`
+- `conversationId`
+- `provider`
+- `model`
+- `status`
+- `occurredAt`
+- `durationMs` when available
+- `traceparent`
+- `idempotencyKey`
 
 ## Event: `inference.cancelled`
 
@@ -96,11 +120,12 @@ Payload fields:
 
 - `requestId`
 - `conversationId`
-- `cancelledBy`
-- `reason`
+- `provider`
+- `model`
+- `status`
+- `reason` when provided by cancellation API
 - `providerCancellationAttempted`
 - `providerCancellationSucceeded`
-- `durationMs`
 
 ## Event: `inference.failed`
 
@@ -131,4 +156,3 @@ Payload fields:
 - Request lifecycle events must be replay-safe.
 - Dead-letter records must include original topic, partition, offset, event id, error code, and consumer name.
 - Replays must not overwrite newer authoritative state without version or timestamp checks.
-

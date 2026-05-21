@@ -1,13 +1,13 @@
 {
-  "$id": "https://contracts.llmobservability.local/events/inference-requested.v1.schema.json",
+  "$id": "https://contracts.llmobservability.local/events/inference-completed.v1.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "InferenceRequested",
+  "title": "InferenceCompleted",
   "type": "object",
   "additionalProperties": false,
   "required": ["eventId", "eventName", "schemaVersion", "occurredAt", "producer", "tenantId", "projectId", "correlationId", "payload"],
   "properties": {
     "eventId": { "type": "string", "format": "uuid" },
-    "eventName": { "const": "inference.requested" },
+    "eventName": { "const": "inference.completed" },
     "schemaVersion": { "const": "1.0.0" },
     "occurredAt": { "type": "string", "format": "date-time" },
     "producer": { "type": "string", "minLength": 1 },
@@ -19,16 +19,17 @@
     "payload": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["requestId", "conversationId", "provider", "model", "status", "streaming", "inputMessageCount", "inputContentHash"],
+      "required": ["requestId", "conversationId", "provider", "model", "status", "inputTokens", "outputTokens", "totalTokens", "durationMs"],
       "properties": {
         "requestId": { "type": "string", "minLength": 1 },
         "conversationId": { "type": "string", "minLength": 1 },
         "provider": { "type": "string", "minLength": 1 },
         "model": { "type": "string", "minLength": 1 },
-        "status": { "const": "ACCEPTED" },
-        "streaming": { "type": "boolean" },
-        "inputMessageCount": { "type": "integer", "minimum": 1 },
-        "inputContentHash": { "type": "string", "minLength": 1 }
+        "status": { "const": "COMPLETED" },
+        "inputTokens": { "type": "integer", "minimum": 0 },
+        "outputTokens": { "type": "integer", "minimum": 0 },
+        "totalTokens": { "type": "integer", "minimum": 0 },
+        "durationMs": { "type": "integer", "minimum": 0 }
       }
     }
   }

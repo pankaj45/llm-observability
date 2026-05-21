@@ -1,12 +1,27 @@
 spring:
   application:
     name: inference-gateway
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
   r2dbc:
     url: ${SPRING_R2DBC_URL:r2dbc:postgresql://localhost:5432/llm_observability}
     username: ${SPRING_R2DBC_USERNAME:llm_observability}
     password: ${SPRING_R2DBC_PASSWORD:llm_observability}
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:6379}
   flyway:
-    enabled: ${SPRING_FLYWAY_ENABLED:false}
+    enabled: ${SPRING_FLYWAY_ENABLED:true}
+    url: ${SPRING_FLYWAY_URL:jdbc:postgresql://localhost:5432/llm_observability}
+    user: ${SPRING_FLYWAY_USER:llm_observability}
+    password: ${SPRING_FLYWAY_PASSWORD:llm_observability}
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
 
 server:
   port: ${SERVER_PORT:8080}
@@ -34,7 +49,19 @@ management:
 
 info:
   service: inference-gateway
-  phase: platform-bootstrap
+  phase: inference-gateway-mvp
+
+llm-observability:
+  inference:
+    stream-heartbeat: ${INFERENCE_STREAM_HEARTBEAT:PT15S}
+    active-stream-ttl: ${INFERENCE_ACTIVE_STREAM_TTL:PT10M}
+  gemini:
+    api-key: ${GEMINI_API_KEY:}
+    base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
+    default-model: ${GEMINI_DEFAULT_MODEL:gemini-1.5-flash}
+  kafka:
+    enabled: ${INFERENCE_KAFKA_ENABLED:false}
+    lifecycle-topic: ${INFERENCE_LIFECYCLE_TOPIC:inference.lifecycle.v1}
 
 logging:
   pattern:

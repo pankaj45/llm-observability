@@ -38,6 +38,8 @@ Initial decisions are recorded as ADRs:
 - [ADR-0008: Multi-Provider LLM Adapter Model](adr/ADR-0008-multi-provider-llm-adapter-model.md)
 - [ADR-0009: Maven and npm Workspace Bootstrap](adr/ADR-0009-maven-npm-workspace-bootstrap.md)
 - [ADR-0010: R2DBC Repositories with Flyway Migrations](adr/ADR-0010-r2dbc-repositories-with-flyway-migrations.md)
+- [ADR-0011: Inference Gateway Request Lifecycle Ownership](adr/ADR-0011-inference-gateway-request-lifecycle-ownership.md)
+- [ADR-0012: Phase 2 Gemini, Conversation Content, and Redis Decisions](adr/ADR-0012-phase-02-gemini-conversation-content-and-redis.md)
 
 ## Milestones
 
@@ -126,11 +128,16 @@ Detailed phase spec: [Phase 01: Platform Bootstrap](specs/phase-01-platform-boot
 
 ## Phase 2: Inference Gateway MVP
 
+Detailed phase spec: [Phase 02: Inference Gateway MVP](specs/phase-02-inference-gateway-mvp.md).
+
+Status as of 2026-05-22: implemented in `services/inference-gateway` with module tests and contract validation. Docker image validation and live/container integration tests are deferred to the agreed later image-testing pass.
+
 ### Goals
 
 - Deliver the first production-grade streaming inference API.
 - Support one provider through the multi-provider adapter interface.
-- Emit normalized lifecycle events for requests, streaming chunks, completion, failure, and cancellation.
+- Emit normalized lifecycle events for request acceptance, completion, failure, and cancellation.
+- Persist approved request lifecycle state for idempotency, status lookup, and cancellation.
 
 ### Scope
 
@@ -140,6 +147,7 @@ Detailed phase spec: [Phase 01: Platform Bootstrap](specs/phase-01-platform-boot
 - Provider adapter interface and first implementation.
 - Cancellation using request-scoped state and provider cancellation where available.
 - Unit, contract, integration, and streaming behavior tests.
+- PostgreSQL entity set approval before Flyway migrations are written.
 
 ### Non-Goals
 
@@ -153,6 +161,7 @@ Detailed phase spec: [Phase 01: Platform Bootstrap](specs/phase-01-platform-boot
 - OpenAPI spec is validated and covered by contract tests.
 - Kafka events are emitted for request lifecycle transitions.
 - Traces include tenant, project, conversation, request, provider, and model attributes with cardinality controls.
+- Final database entities are approved before implementation. Phase 2 approval selects Gemini, implicit conversation creation, Redis, and message persistence.
 - README, architecture docs, and setup instructions are updated.
 
 ### Risks

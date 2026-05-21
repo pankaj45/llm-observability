@@ -98,10 +98,20 @@ services:
       SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/llm_observability
       SPRING_R2DBC_USERNAME: llm_observability
       SPRING_R2DBC_PASSWORD: llm_observability
+      SPRING_FLYWAY_URL: jdbc:postgresql://postgres:5432/llm_observability
+      SPRING_FLYWAY_USER: llm_observability
+      SPRING_FLYWAY_PASSWORD: llm_observability
+      SPRING_REDIS_HOST: redis
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      INFERENCE_KAFKA_ENABLED: "true"
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
     ports:
       - "8080:8080"
     depends_on:
+      - postgres
+      - redis
+      - kafka
       - otel-collector
 
   analytics-query:

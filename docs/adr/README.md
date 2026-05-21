@@ -14,6 +14,8 @@ ADRs capture major decisions that affect architecture, operations, data contract
 - [ADR-0008: Multi-Provider LLM Adapter Model](ADR-0008-multi-provider-llm-adapter-model.md)
 - [ADR-0009: Maven and npm Workspace Bootstrap](ADR-0009-maven-npm-workspace-bootstrap.md)
 - [ADR-0010: R2DBC Repositories with Flyway Migrations](ADR-0010-r2dbc-repositories-with-flyway-migrations.md)
+- [ADR-0011: Inference Gateway Request Lifecycle Ownership](ADR-0011-inference-gateway-request-lifecycle-ownership.md)
+- [ADR-0012: Phase 2 Gemini, Conversation Content, and Redis Decisions](ADR-0012-phase-02-gemini-conversation-content-and-redis.md)
 
 ## Required ADR Format
 

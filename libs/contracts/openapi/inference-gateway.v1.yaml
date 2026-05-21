@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Inference Gateway API
   version: 1.0.0
-  description: Phase 1 contract inventory for streaming inference APIs. Business implementation begins after platform bootstrap.
+  description: Contract inventory for streaming inference APIs. Phase 2 requires backend-owned conversation creation.
 servers:
   - url: http://localhost:8080
 paths:
@@ -12,15 +12,278 @@ paths:
       operationId: startInferenceStream
       tags:
         - inference
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InferenceStreamRequest"
       responses:
-        "501":
-          description: Not implemented during phase 1 platform bootstrap
+        "200":
+          description: Streaming inference response
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /v1/inference/{requestId}/stream:
+    delete:
+      summary: Cancel an active streaming inference request
+      operationId: cancelInferenceStream
+      tags:
+        - inference
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: X-Requested-By
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: X-Cancel-Reason
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Cancellation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelInferenceResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /v1/inference/{requestId}:
+    get:
+      summary: Get inference request status
+      operationId: getInferenceStatus
+      tags:
+        - inference
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Inference request status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InferenceStatusResponse"
+        "400":
+          description: Invalid request
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
 components:
   schemas:
+    InferenceStreamRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - tenantId
+        - projectId
+        - provider
+        - model
+        - messages
+        - parameters
+        - idempotencyKey
+      properties:
+        tenantId:
+          type: string
+          minLength: 1
+        projectId:
+          type: string
+          minLength: 1
+        provider:
+          type: string
+          const: gemini
+        model:
+          type: string
+          minLength: 1
+        messages:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/InferenceMessage"
+        parameters:
+          type: object
+          additionalProperties: true
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        clientRequestId:
+          type: string
+        streamOptions:
+          type: object
+          additionalProperties: true
+        idempotencyKey:
+          type: string
+          minLength: 1
+    InferenceMessage:
+      type: object
+      additionalProperties: false
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+          enum:
+            - system
+            - user
+            - assistant
+            - tool
+        content:
+          type: string
+          minLength: 1
+    CancelInferenceResponse:
+      type: object
+      required:
+        - requestId
+        - conversationId
+        - status
+        - providerCancellationAttempted
+        - providerCancellationSucceeded
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        conversationId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - CANCELLED
+        providerCancellationAttempted:
+          type: boolean
+        providerCancellationSucceeded:
+          type: boolean
+    InferenceStatusResponse:
+      type: object
+      required:
+        - requestId
+        - conversationId
+        - tenantId
+        - projectId
+        - provider
+        - model
+        - status
+        - createdAt
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        conversationId:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+        projectId:
+          type: string
+        provider:
+          type: string
+        model:
+          type: string
+        status:
+          type: string
+          enum:
+            - ACCEPTED
+            - STREAMING
+            - COMPLETED
+            - CANCELLED
+            - FAILED
+        createdAt:
+          type: string
+          format: date-time
+        startedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        firstTokenAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        completedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        cancelledAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        failedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        usage:
+          anyOf:
+            - $ref: "#/components/schemas/UsageSummary"
+            - type: "null"
+        error:
+          anyOf:
+            - $ref: "#/components/schemas/ErrorSummary"
+            - type: "null"
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+    UsageSummary:
+      type: object
+      properties:
+        inputTokens:
+          type: integer
+          minimum: 0
+        outputTokens:
+          type: integer
+          minimum: 0
+        totalTokens:
+          type: integer
+          minimum: 0
+        estimatedCostAmount:
+          type: number
+        estimatedCostCurrency:
+          type: string
+    ErrorSummary:
+      type: object
+      properties:
+        failureStage:
+          type: string
+        errorCode:
+          type: string
+        providerErrorCode:
+          type:
+            - string
+            - "null"
+        message:
+          type: string
+        retryable:
+          type: boolean
     ErrorEnvelope:
       type: object
       required:

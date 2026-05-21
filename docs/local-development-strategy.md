@@ -73,9 +73,17 @@ make down               # stop local dependencies
 
 - PostgreSQL migrations should be versioned and repeatable in local and CI environments.
 - ClickHouse migrations should be explicit and reviewed with expected query patterns.
-- Phase 1 wires Flyway dependencies into backend services, but business migrations begin with domain implementation specs.
+- Phase 2 adds the inference gateway Flyway migration for provider/model, conversation, message, request, usage, error, and cancellation tables.
 - Seed data should be deterministic and safe to reset.
 - Local reset commands must never target production-like connection strings.
+
+## Phase 2 Inference Gateway
+
+- Set `GEMINI_API_KEY` in the shell before starting Compose if live Gemini calls are required.
+- Docker Compose wires the inference gateway to PostgreSQL, Redis, Kafka, and the OpenTelemetry collector.
+- `POST /v1/inference/stream` rejects request bodies with `conversationId`; the gateway always creates the conversation id and title.
+- Kafka lifecycle publishing is enabled in Compose through `INFERENCE_KAFKA_ENABLED=true`.
+- Docker image verification is intentionally deferred to the later image-testing pass.
 
 ## Developer Observability
 

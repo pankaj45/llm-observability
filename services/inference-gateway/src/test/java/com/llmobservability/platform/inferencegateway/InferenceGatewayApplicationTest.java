@@ -14,6 +14,8 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 @TestPropertySource(properties = {
         "spring.flyway.enabled=false",
         "management.health.r2dbc.enabled=false",
+        "management.health.redis.enabled=false",
+        "llm-observability.kafka.enabled=false",
         "management.otlp.tracing.endpoint=http://localhost:4318/v1/traces"
 })
 class InferenceGatewayApplicationTest {

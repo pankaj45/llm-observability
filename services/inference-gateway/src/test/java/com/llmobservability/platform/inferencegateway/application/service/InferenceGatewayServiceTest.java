@@ -1,0 +1,398 @@
+package com.llmobservability.platform.inferencegateway.application.service;
+
+import com.llmobservability.platform.inferencegateway.application.port.in.CancelInferenceCommand;
+import com.llmobservability.platform.inferencegateway.application.port.in.StartInferenceCommand;
+import com.llmobservability.platform.inferencegateway.application.port.out.ActiveStreamStateStore;
+import com.llmobservability.platform.inferencegateway.application.port.out.ConversationMessageRepository;
+import com.llmobservability.platform.inferencegateway.application.port.out.ConversationRepository;
+import com.llmobservability.platform.inferencegateway.application.port.out.InferenceCancellationRepository;
+import com.llmobservability.platform.inferencegateway.application.port.out.InferenceErrorRepository;
+import com.llmobservability.platform.inferencegateway.application.port.out.InferenceRequestRepository;
+import com.llmobservability.platform.inferencegateway.application.port.out.InferenceUsageRepository;
+import com.llmobservability.platform.inferencegateway.application.port.out.LifecycleEventPublisher;
+import com.llmobservability.platform.inferencegateway.application.port.out.ModelCatalogRepository;
+import com.llmobservability.platform.inferencegateway.application.port.out.ProviderClient;
+import com.llmobservability.platform.inferencegateway.application.port.out.ProviderClientRegistry;
+import com.llmobservability.platform.inferencegateway.config.InferenceGatewayProperties;
+import com.llmobservability.platform.inferencegateway.domain.model.Conversation;
+import com.llmobservability.platform.inferencegateway.domain.model.ConversationMessage;
+import com.llmobservability.platform.inferencegateway.domain.model.InferenceCancellation;
+import com.llmobservability.platform.inferencegateway.domain.model.InferenceError;
+import com.llmobservability.platform.inferencegateway.domain.model.InferenceRequest;
+import com.llmobservability.platform.inferencegateway.domain.model.InferenceStatus;
+import com.llmobservability.platform.inferencegateway.domain.model.InferenceUsage;
+import com.llmobservability.platform.inferencegateway.domain.model.MessageRole;
+import com.llmobservability.platform.inferencegateway.domain.model.ModelCatalogEntry;
+import com.llmobservability.platform.inferencegateway.domain.model.StreamEvent;
+import com.llmobservability.platform.inferencegateway.domain.model.StreamEventType;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.test.StepVerifier;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class InferenceGatewayServiceTest {
+
+    @Test
+    void streamCreatesConversationAndPersistsMessages() {
+        TestState state = new TestState();
+        InferenceGatewayService service = service(state);
+
+        List<StreamEvent> events = service.stream(command("phase2-stream-1")).collectList().block();
+
+        assertThat(events).extracting(StreamEvent::type)
+                .containsExactly(StreamEventType.REQUEST_ACCEPTED, StreamEventType.TOKEN_DELTA, StreamEventType.REQUEST_COMPLETED);
+        assertThat(state.conversations).hasSize(1);
+        assertThat(state.requests).hasSize(1);
+        assertThat(state.messages).hasSize(2);
+
+        InferenceRequest request = state.requests.values().iterator().next();
+        Conversation conversation = state.conversations.values().iterator().next();
+        assertThat(request.conversationId()).isEqualTo(conversation.id());
+        assertThat(request.id()).isNotNull();
+        assertThat(conversation.title()).isEqualTo("Explain phase two");
+        assertThat(state.messages).extracting(ConversationMessage::role)
+                .containsExactly(MessageRole.USER, MessageRole.ASSISTANT);
+        assertThat(state.messages.getLast().content()).isEqualTo("done");
+        assertThat(state.usages.values()).singleElement()
+                .extracting(InferenceUsage::totalTokens)
+                .isEqualTo(8);
+    }
+
+    @Test
+    void cancelMarksActiveRequestAndStoresCancellation() {
+        TestState state = new TestState();
+        InferenceGatewayService service = service(state);
+        InferenceRequest request = acceptedRequest();
+        state.requests.put(request.id(), request);
+
+        StepVerifier.create(service.cancel(new CancelInferenceCommand(request.id(), "tester", "no longer needed")))
+                .assertNext(result -> {
+                    assertThat(result.requestId()).isEqualTo(request.id());
+                    assertThat(result.conversationId()).isEqualTo(request.conversationId());
+                    assertThat(result.status()).isEqualTo(InferenceStatus.CANCELLED);
+                })
+                .verifyComplete();
+
+        assertThat(state.requests.get(request.id()).status()).isEqualTo(InferenceStatus.CANCELLED);
+        assertThat(state.cancellations).hasSize(1);
+        assertThat(state.cancelRequested).contains(request.id());
+    }
+
+    private InferenceGatewayService service(TestState state) {
+        return new InferenceGatewayService(
+                state.conversationRepository(),
+                state.conversationMessageRepository(),
+                state.inferenceRequestRepository(),
+                state.inferenceUsageRepository(),
+                state.inferenceErrorRepository(),
+                state.inferenceCancellationRepository(),
+                state.modelCatalogRepository(),
+                state.activeStreamStateStore(),
+                state.providerClientRegistry(),
+                state.lifecycleEventPublisher(),
+                new ConversationTitlePolicy(),
+                new InferenceGatewayProperties(Duration.ofHours(1), Duration.ofMinutes(10)),
+                new SimpleMeterRegistry());
+    }
+
+    private StartInferenceCommand command(String idempotencyKey) {
+        return new StartInferenceCommand(
+                "tenant-a",
+                "project-a",
+                "gemini",
+                "gemini-1.5-flash",
+                List.of(new StartInferenceCommand.Message(MessageRole.USER, "Explain phase two")),
+                Map.of("temperature", 0.2),
+                Map.of("purpose", "test"),
+                "client-1",
+                Map.of(),
+                idempotencyKey,
+                "trace-1");
+    }
+
+    private InferenceRequest acceptedRequest() {
+        UUID requestId = UUID.randomUUID();
+        Instant now = Instant.now();
+        return new InferenceRequest(
+                requestId,
+                "tenant-a",
+                "project-a",
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "gemini",
+                "gemini-1.5-flash",
+                "cancel-test",
+                InferenceStatus.ACCEPTED,
+                true,
+                Map.of(),
+                1,
+                "input-hash",
+                null,
+                "inference:stream:" + requestId,
+                now,
+                now,
+                null,
+                null,
+                null,
+                null,
+                now);
+    }
+
+    private static final class TestState {
+        final Map<UUID, Conversation> conversations = new ConcurrentHashMap<>();
+        final List<ConversationMessage> messages = new ArrayList<>();
+        final Map<UUID, InferenceRequest> requests = new ConcurrentHashMap<>();
+        final Map<UUID, InferenceUsage> usages = new ConcurrentHashMap<>();
+        final List<InferenceError> errors = new ArrayList<>();
+        final List<InferenceCancellation> cancellations = new ArrayList<>();
+        final Set<UUID> cancelRequested = ConcurrentHashMap.newKeySet();
+
+        ConversationRepository conversationRepository() {
+            return new ConversationRepository() {
+                @Override
+                public Mono<Conversation> save(Conversation conversation) {
+                    conversations.put(conversation.id(), conversation);
+                    return Mono.just(conversation);
+                }
+
+                @Override
+                public Mono<Conversation> findById(UUID conversationId) {
+                    return Mono.justOrEmpty(conversations.get(conversationId));
+                }
+            };
+        }
+
+        ConversationMessageRepository conversationMessageRepository() {
+            return new ConversationMessageRepository() {
+                @Override
+                public Mono<Void> saveAll(List<ConversationMessage> newMessages) {
+                    messages.addAll(newMessages);
+                    return Mono.empty();
+                }
+
+                @Override
+                public Mono<Void> save(ConversationMessage message) {
+                    messages.add(message);
+                    return Mono.empty();
+                }
+
+                @Override
+                public Flux<ConversationMessage> findByConversationId(UUID conversationId) {
+                    return Flux.fromIterable(messages.stream()
+                            .filter(message -> message.conversationId().equals(conversationId))
+                            .toList());
+                }
+            };
+        }
+
+        InferenceRequestRepository inferenceRequestRepository() {
+            return new InferenceRequestRepository() {
+                @Override
+                public Mono<InferenceRequest> save(InferenceRequest request) {
+                    requests.put(request.id(), request);
+                    return Mono.just(request);
+                }
+
+                @Override
+                public Mono<InferenceRequest> findById(UUID requestId) {
+                    return Mono.justOrEmpty(requests.get(requestId));
+                }
+
+                @Override
+                public Mono<InferenceRequest> findByIdempotencyKey(String tenantId, String projectId, String idempotencyKey) {
+                    return Flux.fromIterable(requests.values())
+                            .filter(request -> request.tenantId().equals(tenantId)
+                                    && request.projectId().equals(projectId)
+                                    && request.idempotencyKey().equals(idempotencyKey))
+                            .next();
+                }
+
+                @Override
+                public Mono<Void> markStreaming(UUID requestId, Instant firstTokenAt) {
+                    replace(requestId, InferenceStatus.STREAMING, firstTokenAt, null, null, null, null);
+                    return Mono.empty();
+                }
+
+                @Override
+                public Mono<Void> markCompleted(UUID requestId, String outputContentHash, Instant completedAt) {
+                    replace(requestId, InferenceStatus.COMPLETED, null, completedAt, null, null, outputContentHash);
+                    return Mono.empty();
+                }
+
+                @Override
+                public Mono<Void> markCancelled(UUID requestId, Instant cancelledAt) {
+                    replace(requestId, InferenceStatus.CANCELLED, null, null, cancelledAt, null, null);
+                    return Mono.empty();
+                }
+
+                @Override
+                public Mono<Void> markFailed(UUID requestId, Instant failedAt) {
+                    replace(requestId, InferenceStatus.FAILED, null, null, null, failedAt, null);
+                    return Mono.empty();
+                }
+
+                @Override
+                public Mono<Void> updateStatus(UUID requestId, InferenceStatus status, Instant updatedAt) {
+                    replace(requestId, status, null, null, null, null, null);
+                    return Mono.empty();
+                }
+            };
+        }
+
+        InferenceUsageRepository inferenceUsageRepository() {
+            return new InferenceUsageRepository() {
+                @Override
+                public Mono<Void> save(InferenceUsage usage) {
+                    usages.put(usage.inferenceRequestId(), usage);
+                    return Mono.empty();
+                }
+
+                @Override
+                public Mono<InferenceUsage> findByRequestId(UUID requestId) {
+                    return Mono.justOrEmpty(usages.get(requestId));
+                }
+            };
+        }
+
+        InferenceErrorRepository inferenceErrorRepository() {
+            return new InferenceErrorRepository() {
+                @Override
+                public Mono<Void> save(InferenceError error) {
+                    errors.add(error);
+                    return Mono.empty();
+                }
+
+                @Override
+                public Mono<InferenceError> findLatest(UUID requestId) {
+                    return Flux.fromIterable(errors)
+                            .filter(error -> error.inferenceRequestId().equals(requestId))
+                            .next();
+                }
+            };
+        }
+
+        InferenceCancellationRepository inferenceCancellationRepository() {
+            return new InferenceCancellationRepository() {
+                @Override
+                public Mono<Void> save(InferenceCancellation cancellation) {
+                    cancellations.add(cancellation);
+                    return Mono.empty();
+                }
+
+                @Override
+                public Mono<InferenceCancellation> findLatest(UUID requestId) {
+                    return Flux.fromIterable(cancellations)
+                            .filter(cancellation -> cancellation.inferenceRequestId().equals(requestId))
+                            .next();
+                }
+            };
+        }
+
+        ModelCatalogRepository modelCatalogRepository() {
+            return (providerKey, modelKey) -> Mono.just(new ModelCatalogEntry(
+                    UUID.randomUUID(), UUID.randomUUID(), providerKey, modelKey, 1_000_000, 8192, true, false));
+        }
+
+        ActiveStreamStateStore activeStreamStateStore() {
+            return new ActiveStreamStateStore() {
+                @Override
+                public Mono<Void> register(UUID requestId, UUID conversationId, Duration ttl) {
+                    return Mono.empty();
+                }
+
+                @Override
+                public Mono<Void> requestCancellation(UUID requestId, Duration ttl) {
+                    cancelRequested.add(requestId);
+                    return Mono.empty();
+                }
+
+                @Override
+                public Mono<Boolean> cancellationRequested(UUID requestId) {
+                    return Mono.just(cancelRequested.contains(requestId));
+                }
+
+                @Override
+                public Mono<Void> clear(UUID requestId) {
+                    return Mono.empty();
+                }
+            };
+        }
+
+        ProviderClientRegistry providerClientRegistry() {
+            return providerKey -> Mono.just(providerClient());
+        }
+
+        ProviderClient providerClient() {
+            return new ProviderClient() {
+                @Override
+                public String providerKey() {
+                    return "gemini";
+                }
+
+                @Override
+                public Flux<ProviderStreamChunk> stream(ProviderRequest request) {
+                    return Flux.just(new ProviderStreamChunk("done", 3, 5, "STOP", "test"));
+                }
+
+                @Override
+                public Mono<ProviderCancellationResult> cancel(UUID requestId) {
+                    return Mono.just(new ProviderCancellationResult(false, false));
+                }
+            };
+        }
+
+        LifecycleEventPublisher lifecycleEventPublisher() {
+            return (eventName, tenantId, projectId, correlationId, traceparent, idempotencyKey, payload) -> Mono.empty();
+        }
+
+        private void replace(
+                UUID requestId,
+                InferenceStatus status,
+                Instant firstTokenAt,
+                Instant completedAt,
+                Instant cancelledAt,
+                Instant failedAt,
+                String outputContentHash
+        ) {
+            InferenceRequest request = requests.get(requestId);
+            Instant updatedAt = Instant.now();
+            requests.put(requestId, new InferenceRequest(
+                    request.id(),
+                    request.tenantId(),
+                    request.projectId(),
+                    request.conversationId(),
+                    request.providerId(),
+                    request.modelId(),
+                    request.providerKey(),
+                    request.modelKey(),
+                    request.idempotencyKey(),
+                    status,
+                    request.streaming(),
+                    request.requestMetadata(),
+                    request.inputMessageCount(),
+                    request.inputContentHash(),
+                    outputContentHash == null ? request.outputContentHash() : outputContentHash,
+                    request.redisStreamKey(),
+                    request.createdAt(),
+                    request.startedAt(),
+                    firstTokenAt == null ? request.firstTokenAt() : firstTokenAt,
+                    completedAt == null ? request.completedAt() : completedAt,
+                    cancelledAt == null ? request.cancelledAt() : cancelledAt,
+                    failedAt == null ? request.failedAt() : failedAt,
+                    updatedAt));
+        }
+    }
+}

@@ -2,7 +2,7 @@
 
 Production-grade AI observability and inference logging platform for multi-provider LLM applications.
 
-Current status: phase 1 platform bootstrap. The repository now contains buildable service shells, contract validation, local development scaffolding, and architecture documentation. Domain workflows are not implemented yet.
+Current status: phase 2 inference gateway MVP implementation. The repository now contains the WebFlux streaming inference API, Gemini provider adapter, PostgreSQL Flyway schema, Redis cancellation coordination, Kafka lifecycle publisher, contract validation, and focused service/controller tests. Docker image validation is deferred until the later image-testing pass.
 
 ## Specification Baseline
 
@@ -19,6 +19,7 @@ Current status: phase 1 platform bootstrap. The repository now contains buildabl
 - [Deployment strategy](docs/deployment-strategy.md)
 - [Observability strategy](docs/observability-strategy.md)
 - [Phase 01 specification](docs/specs/phase-01-platform-bootstrap.md)
+- [Phase 02 specification](docs/specs/phase-02-inference-gateway-mvp.md)
 - [ADR index](docs/adr/README.md)
 
 ## Target Stack
@@ -64,7 +65,7 @@ Every major technical decision must create or update an ADR in `docs/adr`.
 
 ## Repository Status
 
-This repository currently contains phase 1 bootstrap code and documentation. Conversation, inference, ingestion, and analytics domain behavior will be implemented in later feature phases.
+This repository currently contains phase 2 inference gateway code and documentation. Ingestion, analytics, full conversation continuity, authentication, and UI workflows remain future phases.
 
 ## Local Development
 
@@ -81,3 +82,9 @@ make test
 make dev
 make down
 ```
+
+Phase 2 local notes:
+
+- Set `GEMINI_API_KEY` before running live Gemini streams.
+- `POST /v1/inference/stream` always creates the conversation id on the backend; request bodies containing `conversationId` are rejected.
+- Run `mvn -pl services/inference-gateway test` for the inference gateway test suite.

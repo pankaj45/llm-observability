@@ -58,7 +58,6 @@ Request fields:
 
 - `tenantId`
 - `projectId`
-- `conversationId`
 - `provider`
 - `model`
 - `messages`
@@ -84,13 +83,46 @@ SSE requirements:
 - Clients may resume with an `after` cursor when supported.
 - Cancellation is best-effort if provider APIs do not guarantee cancellation.
 
+## Phase 2 Inference Gateway Contract Requirements
+
+Phase 2 must expand `libs/contracts/openapi/inference-gateway.v1.yaml` before implementation.
+
+Required endpoints:
+
+| API | Method | Path | Required in Phase 2 |
+| --- | --- | --- | --- |
+| Inference stream | POST | `/v1/inference/stream` | Yes |
+| Cancel inference | DELETE | `/v1/inference/{requestId}/stream` | Yes |
+| Inference status | GET | `/v1/inference/{requestId}` | Yes |
+
+Required streaming behavior:
+
+- `POST /v1/inference/stream` returns `text/event-stream`.
+- Request bodies must not include `conversationId`.
+- The gateway creates a UUID conversation with a UI-ready title for every streaming inference request.
+- Each SSE event includes stable `id`, `event`, and JSON `data`.
+- Event ids are monotonic within a request.
+- Heartbeats are emitted during provider silence.
+- Client disconnect attempts to stop provider streaming work.
+
+Required cancellation behavior:
+
+- Cancellation returns a deterministic JSON result when the request is known and cancellation is accepted.
+- Cancellation is best-effort where provider APIs do not guarantee cancellation.
+- Cancellation emits a durable lifecycle event.
+
+Required status behavior:
+
+- Status response includes lifecycle state, provider, model, timestamps, usage summary, cancellation summary, and error summary.
+- Status response excludes raw prompt and completion content by default.
+- Raw conversation content is available only through authorized conversation/message APIs with redaction policy.
+
 ## Validation Requirements
 
 - Provider and model must be supported for the tenant/project.
 - Message roles and content blocks must match the provider-normalized schema.
 - Token, timeout, and temperature parameters must be bounded.
 - Metadata keys and values must have size limits.
-- Conversation id must belong to the tenant/project.
 
 ## Observability Requirements
 
@@ -112,4 +144,3 @@ Every API must have:
 - Error envelope tests.
 - Authorization tests once auth is implemented.
 - Observability assertions for critical path traces and metrics.
-

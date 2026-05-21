@@ -21,13 +21,64 @@ sequenceDiagram
     Gateway->>Provider: Start provider streaming request
     Provider-->>Gateway: Token/chunk stream
     Gateway-->>Client: SSE token event
-    Gateway->>Kafka: Publish inference.token_streamed
     Provider-->>Gateway: Completion metadata
     Gateway-->>Client: SSE completed event
     Gateway->>Kafka: Publish inference.completed
     Worker->>Kafka: Consume lifecycle events
     Worker->>PG: Upsert request and conversation state
     Worker->>CH: Insert analytics facts
+```
+
+## Phase 2 Gateway-Owned Lifecycle State
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Gateway as Inference Gateway
+    participant Redis
+    participant PG as PostgreSQL
+    participant Provider as Provider Adapter
+    participant Kafka
+
+    Client->>Gateway: POST /v1/inference/stream
+    Gateway->>Gateway: Validate request and idempotency key
+    Gateway->>Gateway: Reject client-supplied conversationId
+    Gateway->>PG: Create UUID conversation with title
+    Gateway->>PG: Create inference_request with accepted status
+    Gateway->>PG: Persist request conversation messages
+    Gateway->>Redis: Register active stream and cancellation key
+    Gateway->>Kafka: Publish inference.requested
+    Gateway->>Provider: Start streaming request
+    Provider-->>Gateway: Stream chunk
+    Gateway-->>Client: SSE token.delta or message.delta
+    Provider-->>Gateway: Completion metadata
+    Gateway->>PG: Persist assistant conversation message
+    Gateway->>PG: Mark request completed and persist usage
+    Gateway->>Redis: Clear active stream state
+    Gateway->>Kafka: Publish inference.completed
+    Gateway-->>Client: SSE request.completed
+```
+
+## Phase 2 Cancellation
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Gateway as Inference Gateway
+    participant Redis
+    participant PG as PostgreSQL
+    participant Provider as Provider Adapter
+    participant Kafka
+
+    Client->>Gateway: DELETE /v1/inference/{requestId}/stream
+    Gateway->>PG: Load request and validate active state
+    Gateway->>Redis: Mark cancellation requested
+    Gateway->>Provider: Attempt provider cancellation when supported
+    Gateway->>PG: Record cancellation outcome
+    Gateway->>Kafka: Publish inference.cancelled
+    Gateway-->>Client: 200 OK cancellation result
 ```
 
 ## Cancellation
@@ -46,7 +97,7 @@ sequenceDiagram
     Gateway->>Redis: Mark request cancellation requested
     Gateway->>Provider: Cancel provider request when supported
     Gateway->>Kafka: Publish inference.cancelled
-    Gateway-->>Client: 202 Accepted
+    Gateway-->>Client: 200 OK cancellation result
     Gateway-->>Client: SSE cancelled event if stream is still connected
 ```
 
@@ -119,4 +170,3 @@ sequenceDiagram
     Worker->>PG: Mark request failed
     Worker->>CH: Insert failure analytics fact
 ```
-
