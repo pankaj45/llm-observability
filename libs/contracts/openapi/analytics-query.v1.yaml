@@ -1,0 +1,17 @@
+openapi: 3.1.0
+info:
+  title: Analytics Query API
+  version: 1.0.0
+  description: Phase 1 contract inventory for inference analytics APIs.
+servers:
+  - url: http://localhost:8081
+paths:
+  /v1/analytics/inference/summary:
+    get:
+      summary: Read inference analytics summary
+      operationId: getInferenceSummary
+      tags:
+        - analytics
+      responses:
+        "501":
+          description: Not implemented during phase 1 platform bootstrap

@@ -1,0 +1,31 @@
+{
+  "$id": "https://contracts.llmobservability.local/events/conversation-created.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ConversationCreated",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["eventId", "eventName", "schemaVersion", "occurredAt", "producer", "tenantId", "projectId", "correlationId", "payload"],
+  "properties": {
+    "eventId": { "type": "string", "format": "uuid" },
+    "eventName": { "const": "conversation.created" },
+    "schemaVersion": { "const": "1.0.0" },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "producer": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "projectId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "traceparent": { "type": "string" },
+    "idempotencyKey": { "type": "string" },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conversationId", "status"],
+      "properties": {
+        "conversationId": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["active"] },
+        "title": { "type": "string" }
+      }
+    }
+  }
+}
+

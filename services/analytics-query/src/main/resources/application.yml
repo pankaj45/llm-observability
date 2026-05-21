@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: analytics-query
+  r2dbc:
+    url: ${SPRING_R2DBC_URL:r2dbc:postgresql://localhost:5432/llm_observability}
+    username: ${SPRING_R2DBC_USERNAME:llm_observability}
+    password: ${SPRING_R2DBC_PASSWORD:llm_observability}
+  flyway:
+    enabled: ${SPRING_FLYWAY_ENABLED:false}
+
+server:
+  port: ${SERVER_PORT:8081}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when_authorized
+  info:
+    env:
+      enabled: true
+  tracing:
+    enabled: true
+    sampling:
+      probability: ${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+
+info:
+  service: analytics-query
+  phase: platform-bootstrap
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} service=${spring.application.name} traceId=%X{traceId:-} spanId=%X{spanId:-} level=%level thread=%thread logger=%logger{36} msg=%msg%n"

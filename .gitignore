@@ -1,0 +1,25 @@
+.DS_Store
+.idea/
+.vscode/
+.prompts/
+**/.prompts/
+
+# Java
+target/
+*.class
+
+# Node
+node_modules/
+.next/
+out/
+npm-debug.log*
+*.tsbuildinfo
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Runtime
+logs/
+*.log

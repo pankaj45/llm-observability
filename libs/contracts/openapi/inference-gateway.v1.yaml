@@ -1,0 +1,45 @@
+openapi: 3.1.0
+info:
+  title: Inference Gateway API
+  version: 1.0.0
+  description: Phase 1 contract inventory for streaming inference APIs. Business implementation begins after platform bootstrap.
+servers:
+  - url: http://localhost:8080
+paths:
+  /v1/inference/stream:
+    post:
+      summary: Start a streaming inference request
+      operationId: startInferenceStream
+      tags:
+        - inference
+      responses:
+        "501":
+          description: Not implemented during phase 1 platform bootstrap
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+components:
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - traceId
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                type: object
+            traceId:
+              type: string

@@ -1,0 +1,79 @@
+openapi: 3.1.0
+info:
+  title: Conversation API
+  version: 1.0.0
+  description: Contract inventory for future conversation workflows.
+servers:
+  - url: http://localhost:8080
+paths:
+  /v1/conversations:
+    post:
+      summary: Create a conversation
+      operationId: createConversation
+      tags:
+        - conversation
+      responses:
+        "501":
+          description: Not implemented during phase 1 platform bootstrap
+    get:
+      summary: List conversations
+      operationId: listConversations
+      tags:
+        - conversation
+      responses:
+        "501":
+          description: Not implemented during phase 1 platform bootstrap
+  /v1/conversations/{conversationId}/messages:
+    post:
+      summary: Append messages to a conversation
+      operationId: appendConversationMessages
+      tags:
+        - conversation
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      responses:
+        "501":
+          description: Not implemented during phase 1 platform bootstrap
+  /v1/conversations/{conversationId}/events:
+    get:
+      summary: Resume conversation event stream
+      operationId: resumeConversation
+      tags:
+        - conversation
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      responses:
+        "501":
+          description: Not implemented during phase 1 platform bootstrap
+  /v1/conversations/{conversationId}/cancellation:
+    post:
+      summary: Cancel active conversation work
+      operationId: cancelConversation
+      tags:
+        - conversation
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      responses:
+        "501":
+          description: Not implemented during phase 1 platform bootstrap
+  /v1/conversations/{conversationId}/summary:
+    get:
+      summary: Get conversation summary
+      operationId: getConversationSummary
+      tags:
+        - conversation
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      responses:
+        "501":
+          description: Not implemented during phase 1 platform bootstrap
+components:
+  parameters:
+    ConversationId:
+      name: conversationId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+
