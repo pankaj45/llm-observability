@@ -2,6 +2,7 @@ package com.llmobservability.platform.inferencegateway.application.service;
 
 import com.llmobservability.platform.inferencegateway.application.port.in.CancelInferenceCommand;
 import com.llmobservability.platform.inferencegateway.application.port.in.CancelInferenceResult;
+import com.llmobservability.platform.inferencegateway.application.port.in.ContinueConversationCommand;
 import com.llmobservability.platform.inferencegateway.application.port.in.ErrorSummary;
 import com.llmobservability.platform.inferencegateway.application.port.in.GetInferenceStatusQuery;
 import com.llmobservability.platform.inferencegateway.application.port.in.InferenceGatewayUseCase;
@@ -108,7 +109,24 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                                 ErrorCode.VALIDATION_INVALID_REQUEST,
                                 FailureStage.VALIDATION,
                                 "idempotencyKey has already been used for request " + existing.id())))
-                        .switchIfEmpty(Mono.defer(() -> prepareStream(command)).flatMapMany(prepared -> streamPrepared(prepared, command))))
+                        .switchIfEmpty(Mono.defer(() -> prepareStream(command)).flatMapMany(prepared -> streamPrepared(prepared, execution(command)))))
+                .doFinally(signalType -> sample.stop(Timer.builder("inference_request_duration_seconds")
+                        .description("Inference stream lifecycle duration")
+                        .tag("provider", command.provider())
+                        .tag("model", command.model())
+                        .register(meterRegistry)));
+    }
+
+    @Override
+    public Flux<StreamEvent> continueConversation(ContinueConversationCommand command) {
+        Timer.Sample sample = Timer.start(meterRegistry);
+        return validate(command)
+                .thenMany(inferenceRequestRepository.findByIdempotencyKey(command.tenantId(), command.projectId(), command.idempotencyKey())
+                        .flatMapMany(existing -> Flux.<StreamEvent>error(new ApplicationException(
+                                ErrorCode.VALIDATION_INVALID_REQUEST,
+                                FailureStage.VALIDATION,
+                                "idempotencyKey has already been used for request " + existing.id())))
+                        .switchIfEmpty(Mono.defer(() -> prepareContinuation(command)).flatMapMany(tuple -> streamPrepared(tuple.prepared(), tuple.execution()))))
                 .doFinally(signalType -> sample.stop(Timer.builder("inference_request_duration_seconds")
                         .description("Inference stream lifecycle duration")
                         .tag("provider", command.provider())
@@ -203,6 +221,34 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
         return Mono.empty();
     }
 
+    private Mono<Void> validate(ContinueConversationCommand command) {
+        if (!"gemini".equals(command.provider())) {
+            return Mono.error(new ApplicationException(
+                    ErrorCode.PROVIDER_UNSUPPORTED,
+                    FailureStage.VALIDATION,
+                    "Only provider 'gemini' is supported in phase 2"));
+        }
+        if (command.conversationId() == null) {
+            return Mono.error(new ApplicationException(
+                    ErrorCode.CONVERSATION_NOT_FOUND,
+                    FailureStage.VALIDATION,
+                    "conversationId must be provided"));
+        }
+        if (command.messages() == null || command.messages().isEmpty()) {
+            return Mono.error(new ApplicationException(
+                    ErrorCode.VALIDATION_INVALID_REQUEST,
+                    FailureStage.VALIDATION,
+                    "messages must not be empty"));
+        }
+        if (command.idempotencyKey() == null || command.idempotencyKey().isBlank()) {
+            return Mono.error(new ApplicationException(
+                    ErrorCode.VALIDATION_INVALID_REQUEST,
+                    FailureStage.VALIDATION,
+                    "idempotencyKey must not be blank"));
+        }
+        return Mono.empty();
+    }
+
     private Mono<PreparedStream> prepareStream(StartInferenceCommand command) {
         UUID requestId = UUID.randomUUID();
         UUID conversationId = UUID.randomUUID();
@@ -236,7 +282,73 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                                 .map(providerClient -> PreparedStream.create(request, model, providerClient))));
     }
 
-    private Flux<StreamEvent> streamPrepared(PreparedStream prepared, StartInferenceCommand command) {
+    private Mono<PreparedContinuation> prepareContinuation(ContinueConversationCommand command) {
+        UUID requestId = UUID.randomUUID();
+        Instant now = Instant.now();
+        String redisStreamKey = "inference:stream:" + requestId;
+
+        return conversationRepository.findById(command.conversationId())
+                .switchIfEmpty(Mono.error(new ApplicationException(
+                        ErrorCode.CONVERSATION_NOT_FOUND,
+                        FailureStage.VALIDATION,
+                        "Conversation was not found")))
+                .flatMap(conversation -> {
+                    if (!conversation.tenantId().equals(command.tenantId()) || !conversation.projectId().equals(command.projectId())) {
+                        return Mono.error(new ApplicationException(
+                                ErrorCode.CONVERSATION_NOT_FOUND,
+                                FailureStage.VALIDATION,
+                                "Conversation was not found"));
+                    }
+                    if (conversation.status() != ConversationStatus.ACTIVE) {
+                        return Mono.error(new ApplicationException(
+                                ErrorCode.VALIDATION_INVALID_REQUEST,
+                                FailureStage.VALIDATION,
+                                "Conversation is not active"));
+                    }
+                    return conversationMessageRepository.findByConversationId(conversation.id())
+                            .collectList()
+                            .flatMap(existingMessages -> prepareContinuation(command, requestId, now, redisStreamKey, existingMessages));
+                });
+    }
+
+    private Mono<PreparedContinuation> prepareContinuation(
+            ContinueConversationCommand command,
+            UUID requestId,
+            Instant now,
+            String redisStreamKey,
+            List<ConversationMessage> existingMessages
+    ) {
+        List<ConversationMessage> orderedExistingMessages = existingMessages.stream()
+                .sorted((left, right) -> Integer.compare(left.sequence(), right.sequence()))
+                .toList();
+        int nextSequence = orderedExistingMessages.stream()
+                .mapToInt(ConversationMessage::sequence)
+                .max()
+                .orElse(-1) + 1;
+        List<ConversationMessage> newMessages = toConversationMessages(command, nextSequence, now);
+        List<StartInferenceCommand.Message> providerMessages = new ArrayList<>();
+        providerMessages.addAll(orderedExistingMessages.stream()
+                .map(message -> new StartInferenceCommand.Message(message.role(), message.content()))
+                .toList());
+        providerMessages.addAll(command.messages());
+
+        return modelCatalogRepository.findEnabledModel(command.provider(), command.model())
+                .switchIfEmpty(Mono.error(new ApplicationException(
+                        ErrorCode.PROVIDER_UNSUPPORTED,
+                        FailureStage.VALIDATION,
+                        "Model is not enabled for provider")))
+                .flatMap(model -> conversationMessageRepository.saveAll(newMessages)
+                        .then(Mono.just(createRequest(command, requestId, model, redisStreamKey, providerMessages, now)))
+                        .flatMap(inferenceRequestRepository::save)
+                        .flatMap(request -> activeStreamStateStore.register(request.id(), request.conversationId(), properties.activeStreamTtl())
+                                .then(publish("inference.requested", request, command.traceId(), requestedPayload(request)))
+                                .then(providerClientRegistry.get(command.provider()))
+                                .map(providerClient -> new PreparedContinuation(
+                                        PreparedStream.create(request, model, providerClient),
+                                        execution(command, providerMessages)))));
+    }
+
+    private Flux<StreamEvent> streamPrepared(PreparedStream prepared, StreamExecution execution) {
         InferenceRequest request = prepared.request();
         ProviderClient providerClient = prepared.providerClient();
         AtomicLong sequence = new AtomicLong(0);
@@ -246,10 +358,10 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
         StringBuilder assistantContent = new StringBuilder();
 
         Flux<StreamEvent> lifecycle = Flux.concat(
-                Mono.just(event(StreamEventType.REQUEST_ACCEPTED, request, sequence.incrementAndGet(), command.traceId(), Map.of(
+                Mono.just(event(StreamEventType.REQUEST_ACCEPTED, request, sequence.incrementAndGet(), execution.traceId(), Map.of(
                         "status", InferenceStatus.ACCEPTED.name(),
-                        "conversationTitle", "created"))),
-                providerClient.stream(toProviderRequest(request, command))
+                        "conversation", execution.conversationState()))),
+                providerClient.stream(toProviderRequest(request, execution))
                         .flatMap(chunk -> activeStreamStateStore.cancellationRequested(request.id())
                                 .flatMap(cancelled -> {
                                     if (Boolean.TRUE.equals(cancelled)) {
@@ -291,19 +403,19 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                             data.put("inputTokens", inputTokens.get());
                             data.put("outputTokens", outputTokens.get());
 
-                            return markStreaming.thenReturn(event(eventType, request, sequence.incrementAndGet(), command.traceId(), data));
+                            return markStreaming.thenReturn(event(eventType, request, sequence.incrementAndGet(), execution.traceId(), data));
                         }),
-                Mono.defer(() -> completeRequest(request, assistantContent.toString(), inputTokens.get(), outputTokens.get(), sequence, command.traceId()))
+                Mono.defer(() -> completeRequest(request, assistantContent.toString(), inputTokens.get(), outputTokens.get(), sequence, execution.traceId()))
         );
 
         return lifecycle
-                .publish(shared -> Flux.merge(shared, heartbeat(request, command.traceId(), sequence).takeUntilOther(shared.ignoreElements())))
+                .publish(shared -> Flux.merge(shared, heartbeat(request, execution.traceId(), sequence).takeUntilOther(shared.ignoreElements())))
                 .onErrorResume(error -> {
                     if (error instanceof ApplicationException applicationException
                             && applicationException.errorCode() == ErrorCode.STREAM_CANCELLED) {
-                        return cancelStream(request, sequence, command.traceId());
+                        return cancelStream(request, sequence, execution.traceId());
                     }
-                    return failRequest(request, error, sequence, command.traceId());
+                    return failRequest(request, error, sequence, execution.traceId());
                 })
                 .doFinally(signalType -> activeStreamStateStore.clear(request.id()).subscribe());
     }
@@ -410,21 +522,67 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
     }
 
     private InferenceRequest createRequest(StartInferenceCommand command, UUID requestId, UUID conversationId, ModelCatalogEntry model, String redisStreamKey, Instant now) {
-        List<String> content = command.messages().stream().map(StartInferenceCommand.Message::content).toList();
-        return new InferenceRequest(
+        return createRequest(
                 requestId,
                 command.tenantId(),
                 command.projectId(),
+                conversationId,
+                model,
+                command.idempotencyKey(),
+                command.metadata(),
+                redisStreamKey,
+                command.messages(),
+                now);
+    }
+
+    private InferenceRequest createRequest(
+            ContinueConversationCommand command,
+            UUID requestId,
+            ModelCatalogEntry model,
+            String redisStreamKey,
+            List<StartInferenceCommand.Message> providerMessages,
+            Instant now
+    ) {
+        return createRequest(
+                requestId,
+                command.tenantId(),
+                command.projectId(),
+                command.conversationId(),
+                model,
+                command.idempotencyKey(),
+                command.metadata(),
+                redisStreamKey,
+                providerMessages,
+                now);
+    }
+
+    private InferenceRequest createRequest(
+            UUID requestId,
+            String tenantId,
+            String projectId,
+            UUID conversationId,
+            ModelCatalogEntry model,
+            String idempotencyKey,
+            Map<String, String> metadata,
+            String redisStreamKey,
+            List<StartInferenceCommand.Message> providerMessages,
+            Instant now
+    ) {
+        List<String> content = providerMessages.stream().map(StartInferenceCommand.Message::content).toList();
+        return new InferenceRequest(
+                requestId,
+                tenantId,
+                projectId,
                 conversationId,
                 model.providerId(),
                 model.modelId(),
                 model.providerKey(),
                 model.modelKey(),
-                command.idempotencyKey(),
+                idempotencyKey,
                 InferenceStatus.ACCEPTED,
                 true,
-                command.metadata(),
-                command.messages().size(),
+                metadata,
+                providerMessages.size(),
                 ContentHasher.sha256Joined(content),
                 null,
                 redisStreamKey,
@@ -456,11 +614,38 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
         return messages;
     }
 
-    private ProviderClient.ProviderRequest toProviderRequest(InferenceRequest request, StartInferenceCommand command) {
-        List<ProviderClient.ProviderMessage> messages = command.messages().stream()
+    private List<ConversationMessage> toConversationMessages(ContinueConversationCommand command, int startingSequence, Instant now) {
+        List<ConversationMessage> messages = new ArrayList<>();
+        for (int i = 0; i < command.messages().size(); i++) {
+            StartInferenceCommand.Message message = command.messages().get(i);
+            messages.add(new ConversationMessage(
+                    UUID.randomUUID(),
+                    command.conversationId(),
+                    message.role(),
+                    startingSequence + i,
+                    message.content(),
+                    ContentHasher.sha256(message.content()),
+                    estimateTokens(message.content()),
+                    RedactionState.NONE,
+                    Map.of("source", "request"),
+                    now));
+        }
+        return messages;
+    }
+
+    private ProviderClient.ProviderRequest toProviderRequest(InferenceRequest request, StreamExecution execution) {
+        List<ProviderClient.ProviderMessage> messages = execution.providerMessages().stream()
                 .map(message -> new ProviderClient.ProviderMessage(message.role().name().toLowerCase(), message.content()))
                 .toList();
-        return new ProviderClient.ProviderRequest(request.id(), request.modelKey(), messages, command.parameters());
+        return new ProviderClient.ProviderRequest(request.id(), request.modelKey(), messages, execution.parameters());
+    }
+
+    private StreamExecution execution(StartInferenceCommand command) {
+        return new StreamExecution(command.parameters(), command.traceId(), command.messages(), "created");
+    }
+
+    private StreamExecution execution(ContinueConversationCommand command, List<StartInferenceCommand.Message> providerMessages) {
+        return new StreamExecution(command.parameters(), command.traceId(), providerMessages, "continued");
     }
 
     private Map<String, Object> requestedPayload(InferenceRequest request) {
@@ -547,5 +732,16 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
         private static PreparedStream create(InferenceRequest request, ModelCatalogEntry model, ProviderClient providerClient) {
             return new PreparedStream(request, model, providerClient);
         }
+    }
+
+    private record PreparedContinuation(PreparedStream prepared, StreamExecution execution) {
+    }
+
+    private record StreamExecution(
+            Map<String, Object> parameters,
+            String traceId,
+            List<StartInferenceCommand.Message> providerMessages,
+            String conversationState
+    ) {
     }
 }

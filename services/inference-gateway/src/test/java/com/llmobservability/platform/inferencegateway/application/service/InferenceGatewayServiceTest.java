@@ -1,6 +1,7 @@
 package com.llmobservability.platform.inferencegateway.application.service;
 
 import com.llmobservability.platform.inferencegateway.application.port.in.CancelInferenceCommand;
+import com.llmobservability.platform.inferencegateway.application.port.in.ContinueConversationCommand;
 import com.llmobservability.platform.inferencegateway.application.port.in.StartInferenceCommand;
 import com.llmobservability.platform.inferencegateway.application.port.out.ActiveStreamStateStore;
 import com.llmobservability.platform.inferencegateway.application.port.out.ConversationMessageRepository;
@@ -15,6 +16,7 @@ import com.llmobservability.platform.inferencegateway.application.port.out.Provi
 import com.llmobservability.platform.inferencegateway.application.port.out.ProviderClientRegistry;
 import com.llmobservability.platform.inferencegateway.config.InferenceGatewayProperties;
 import com.llmobservability.platform.inferencegateway.domain.model.Conversation;
+import com.llmobservability.platform.inferencegateway.domain.model.ConversationStatus;
 import com.llmobservability.platform.inferencegateway.domain.model.ConversationMessage;
 import com.llmobservability.platform.inferencegateway.domain.model.InferenceCancellation;
 import com.llmobservability.platform.inferencegateway.domain.model.InferenceError;
@@ -23,6 +25,7 @@ import com.llmobservability.platform.inferencegateway.domain.model.InferenceStat
 import com.llmobservability.platform.inferencegateway.domain.model.InferenceUsage;
 import com.llmobservability.platform.inferencegateway.domain.model.MessageRole;
 import com.llmobservability.platform.inferencegateway.domain.model.ModelCatalogEntry;
+import com.llmobservability.platform.inferencegateway.domain.model.RedactionState;
 import com.llmobservability.platform.inferencegateway.domain.model.StreamEvent;
 import com.llmobservability.platform.inferencegateway.domain.model.StreamEventType;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -68,6 +71,75 @@ class InferenceGatewayServiceTest {
         assertThat(state.usages.values()).singleElement()
                 .extracting(InferenceUsage::totalTokens)
                 .isEqualTo(8);
+    }
+
+    @Test
+    void continueConversationAppendsMessagesAndStreamsWithExistingContext() {
+        TestState state = new TestState();
+        InferenceGatewayService service = service(state);
+        UUID conversationId = UUID.randomUUID();
+        Instant now = Instant.now();
+        state.conversations.put(conversationId, new Conversation(
+                conversationId,
+                "tenant-a",
+                "project-a",
+                ConversationStatus.ACTIVE,
+                "Explain phase two",
+                "FIRST_USER_MESSAGE",
+                now,
+                now,
+                null));
+        state.messages.add(new ConversationMessage(
+                UUID.randomUUID(),
+                conversationId,
+                MessageRole.USER,
+                0,
+                "Explain phase two",
+                "hash-1",
+                5,
+                RedactionState.NONE,
+                Map.of("source", "request"),
+                now));
+        state.messages.add(new ConversationMessage(
+                UUID.randomUUID(),
+                conversationId,
+                MessageRole.ASSISTANT,
+                1,
+                "done",
+                "hash-2",
+                1,
+                RedactionState.NONE,
+                Map.of("source", "gemini"),
+                now));
+
+        List<StreamEvent> events = service.continueConversation(new ContinueConversationCommand(
+                conversationId,
+                "tenant-a",
+                "project-a",
+                "gemini",
+                "gemini-1.5-flash",
+                List.of(new StartInferenceCommand.Message(MessageRole.USER, "Can you give an example?")),
+                Map.of("temperature", 0.2),
+                Map.of("purpose", "test"),
+                "client-2",
+                Map.of(),
+                "phase2-continue-1",
+                "trace-2")).collectList().block();
+
+        assertThat(events).extracting(StreamEvent::type)
+                .containsExactly(StreamEventType.REQUEST_ACCEPTED, StreamEventType.TOKEN_DELTA, StreamEventType.REQUEST_COMPLETED);
+        assertThat(state.conversations).hasSize(1);
+        assertThat(state.requests).hasSize(1);
+        assertThat(state.requests.values().iterator().next().conversationId()).isEqualTo(conversationId);
+        assertThat(state.messages).hasSize(4);
+        assertThat(state.messages.get(2).role()).isEqualTo(MessageRole.USER);
+        assertThat(state.messages.get(2).sequence()).isEqualTo(2);
+        assertThat(state.messages.get(3).role()).isEqualTo(MessageRole.ASSISTANT);
+        assertThat(state.messages.get(3).sequence()).isEqualTo(3);
+        assertThat(state.providerRequests).singleElement()
+                .satisfies(providerRequest -> assertThat(providerRequest.messages())
+                        .extracting(ProviderClient.ProviderMessage::content)
+                        .containsExactly("Explain phase two", "done", "Can you give an example?"));
     }
 
     @Test
@@ -158,6 +230,7 @@ class InferenceGatewayServiceTest {
         final Map<UUID, InferenceUsage> usages = new ConcurrentHashMap<>();
         final List<InferenceError> errors = new ArrayList<>();
         final List<InferenceCancellation> cancellations = new ArrayList<>();
+        final List<ProviderClient.ProviderRequest> providerRequests = new ArrayList<>();
         final Set<UUID> cancelRequested = ConcurrentHashMap.newKeySet();
 
         ConversationRepository conversationRepository() {
@@ -344,6 +417,7 @@ class InferenceGatewayServiceTest {
 
                 @Override
                 public Flux<ProviderStreamChunk> stream(ProviderRequest request) {
+                    providerRequests.add(request);
                     return Flux.just(new ProviderStreamChunk("done", 3, 5, "STOP", "test"));
                 }
 

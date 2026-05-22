@@ -60,6 +60,36 @@ sequenceDiagram
     Gateway-->>Client: SSE request.completed
 ```
 
+## Phase 2 Conversation Continuation
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Gateway as Inference Gateway
+    participant Redis
+    participant PG as PostgreSQL
+    participant Provider as Provider Adapter
+    participant Kafka
+
+    Client->>Gateway: POST /v1/conversations/{conversationId}/messages/stream
+    Gateway->>Gateway: Validate tenant/project, conversation, and idempotency key
+    Gateway->>PG: Load conversation and prior conversation messages
+    Gateway->>PG: Persist new user conversation message
+    Gateway->>PG: Create inference_request linked to conversation
+    Gateway->>Redis: Register active stream and cancellation key
+    Gateway->>Kafka: Publish inference.requested
+    Gateway->>Provider: Start stream with prior messages plus new turn
+    Provider-->>Gateway: Stream chunk
+    Gateway-->>Client: SSE token.delta or message.delta
+    Provider-->>Gateway: Completion metadata
+    Gateway->>PG: Persist assistant conversation message
+    Gateway->>PG: Mark request completed and persist usage
+    Gateway->>Redis: Clear active stream state
+    Gateway->>Kafka: Publish inference.completed
+    Gateway-->>Client: SSE request.completed
+```
+
 ## Phase 2 Cancellation
 
 ```mermaid

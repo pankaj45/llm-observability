@@ -42,6 +42,7 @@ libs/contracts/openapi/
 | API | Method | Path | Purpose |
 | --- | --- | --- | --- |
 | Inference stream | POST | `/v1/inference/stream` | Start a streaming inference request |
+| Conversation message stream | POST | `/v1/conversations/{conversationId}/messages/stream` | Continue an existing conversation |
 | Cancel inference | DELETE | `/v1/inference/{requestId}/stream` | Request cancellation for an active stream |
 | Inference status | GET | `/v1/inference/{requestId}` | Read request status and summary |
 | Conversation create | POST | `/v1/conversations` | Create a conversation |
@@ -92,6 +93,7 @@ Required endpoints:
 | API | Method | Path | Required in Phase 2 |
 | --- | --- | --- | --- |
 | Inference stream | POST | `/v1/inference/stream` | Yes |
+| Conversation message stream | POST | `/v1/conversations/{conversationId}/messages/stream` | Yes |
 | Cancel inference | DELETE | `/v1/inference/{requestId}/stream` | Yes |
 | Inference status | GET | `/v1/inference/{requestId}` | Yes |
 
@@ -99,7 +101,8 @@ Required streaming behavior:
 
 - `POST /v1/inference/stream` returns `text/event-stream`.
 - Request bodies must not include `conversationId`.
-- The gateway creates a UUID conversation with a UI-ready title for every streaming inference request.
+- The gateway creates a UUID conversation with a UI-ready title for every new streaming inference request.
+- `POST /v1/conversations/{conversationId}/messages/stream` continues an existing conversation, appends only the new turn, and loads prior messages server-side for provider context.
 - Each SSE event includes stable `id`, `event`, and JSON `data`.
 - Event ids are monotonic within a request.
 - Heartbeats are emitted during provider silence.

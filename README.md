@@ -65,7 +65,7 @@ Every major technical decision must create or update an ADR in `docs/adr`.
 
 ## Repository Status
 
-This repository currently contains phase 2 inference gateway code and documentation. Ingestion, analytics, full conversation continuity, authentication, and UI workflows remain future phases.
+This repository currently contains phase 2 inference gateway code and documentation. Ingestion, analytics, conversation summaries and context-window optimization, authentication, and UI workflows remain future phases.
 
 ## Local Development
 
@@ -87,4 +87,5 @@ Phase 2 local notes:
 
 - Set `GEMINI_API_KEY` before running live Gemini streams.
 - `POST /v1/inference/stream` always creates the conversation id on the backend; request bodies containing `conversationId` are rejected.
+- `POST /v1/conversations/{conversationId}/messages/stream` continues an existing conversation; clients send only the new turn.
 - Run `mvn -pl services/inference-gateway test` for the inference gateway test suite.

@@ -7,8 +7,9 @@ import reactor.core.publisher.Mono;
 public interface InferenceGatewayUseCase {
     Flux<StreamEvent> stream(StartInferenceCommand command);
 
+    Flux<StreamEvent> continueConversation(ContinueConversationCommand command);
+
     Mono<CancelInferenceResult> cancel(CancelInferenceCommand command);
 
     Mono<InferenceStatusResult> status(GetInferenceStatusQuery query);
 }
-

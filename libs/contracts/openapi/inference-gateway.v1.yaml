@@ -31,6 +31,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+  /v1/conversations/{conversationId}/messages/stream:
+    post:
+      summary: Continue an existing conversation with a streaming inference request
+      operationId: continueConversationStream
+      tags:
+        - conversations
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContinueConversationStreamRequest"
+      responses:
+        "200":
+          description: Streaming conversation continuation response
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
   /v1/inference/{requestId}/stream:
     delete:
       summary: Cancel an active streaming inference request
@@ -96,6 +128,50 @@ paths:
 components:
   schemas:
     InferenceStreamRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - tenantId
+        - projectId
+        - provider
+        - model
+        - messages
+        - parameters
+        - idempotencyKey
+      properties:
+        tenantId:
+          type: string
+          minLength: 1
+        projectId:
+          type: string
+          minLength: 1
+        provider:
+          type: string
+          const: gemini
+        model:
+          type: string
+          minLength: 1
+        messages:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/InferenceMessage"
+        parameters:
+          type: object
+          additionalProperties: true
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        clientRequestId:
+          type: string
+        streamOptions:
+          type: object
+          additionalProperties: true
+        idempotencyKey:
+          type: string
+          minLength: 1
+    ContinueConversationStreamRequest:
       type: object
       additionalProperties: false
       required:

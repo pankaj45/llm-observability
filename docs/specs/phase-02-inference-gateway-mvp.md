@@ -7,6 +7,7 @@ Status as of 2026-05-22: implemented for the inference gateway service, excludin
 Implemented:
 
 - WebFlux `POST /v1/inference/stream` SSE API.
+- WebFlux `POST /v1/conversations/{conversationId}/messages/stream` SSE API for continuing an existing conversation.
 - Backend-owned UUID conversation creation and title generation.
 - Rejection of client-supplied `conversationId` in stream requests.
 - Gemini provider adapter through the provider port.
@@ -31,7 +32,8 @@ Deferred from runtime verification:
 - Support cancellation for active inference requests.
 - Emit durable lifecycle events for observability and future ingestion.
 - Persist enough PostgreSQL state to make request status, idempotency, and cancellation reliable.
-- Create a backend-owned conversation id for every inference request.
+- Create a backend-owned conversation id for every new inference stream request.
+- Continue existing conversations through a conversation-scoped stream endpoint.
 - Persist conversation messages so the UI can show conversation detail and summaries in later phases.
 - Keep provider-specific behavior isolated behind outbound adapters.
 
@@ -54,7 +56,7 @@ Deferred from runtime verification:
 - No analytics dashboard implementation.
 - No ClickHouse ingestion implementation.
 - No conversation summary generation.
-- No token-aware context window optimization beyond accepting a request payload already prepared by the caller.
+- No token-aware context window optimization beyond replaying persisted conversation messages for continuation requests.
 - No provider routing or fallback policy across multiple live providers.
 - No billing workflow or tenant chargeback.
 - No token stream replay from persisted stream events.
@@ -71,7 +73,8 @@ Deferred from runtime verification:
 
 - Use Gemini as the first real provider.
 - Require `tenantId` and `projectId`; do not accept `conversationId` in the `POST /v1/inference/stream` request body.
-- Create a UUID conversation for every inference request.
+- Create a UUID conversation for every new inference request.
+- Use `POST /v1/conversations/{conversationId}/messages/stream` for subsequent turns in an existing conversation; clients send only the new turn and the gateway loads prior persisted messages for provider context.
 - Assign a conversation title at creation time. The phase 2 default should derive a short title from the first user message when available, with deterministic fallback `New conversation`.
 - Persist raw prompt and completion content in `conversation_message` because production observability needs inspectable conversations for debugging, audit, user support, and UI trace workflows.
 - Protect persisted content with access-control, retention, and redaction rules. Do not log raw content, use raw content as metric labels, or publish raw content to Kafka by default.
@@ -128,6 +131,38 @@ Required behavior:
 - Return SSE stream with stable event ids.
 - Emit lifecycle events.
 - Persist lifecycle state and conversation messages.
+
+### `POST /v1/conversations/{conversationId}/messages/stream`
+
+Continues an existing conversation with a streaming inference request.
+
+Required request fields:
+
+- `tenantId`
+- `projectId`
+- `provider`
+- `model`
+- `messages`
+- `parameters`
+- `idempotencyKey`
+
+Optional request fields:
+
+- `metadata`
+- `clientRequestId`
+- `streamOptions`
+
+Required behavior:
+
+- Validate tenant and project identifiers.
+- Validate the referenced conversation exists, belongs to the tenant/project, and is active.
+- Do not accept `conversationId` in the request body; use the path parameter.
+- Persist only the newly submitted conversation messages before streaming.
+- Load prior persisted conversation messages and include them with the new turn when constructing provider context.
+- Create a new `inference_request` linked to the existing conversation.
+- Return SSE stream with the same event contract as the start endpoint.
+- Persist the assistant response as the next conversation message.
+- Emit lifecycle events.
 
 ### `DELETE /v1/inference/{requestId}/stream`
 
@@ -629,7 +664,8 @@ Observability tests:
 - Kafka lifecycle events are emitted for requested, completed, cancelled, and failed.
 - Approved PostgreSQL migrations are implemented with Flyway for the final phase 2 entity set.
 - Redis active stream and cancellation state is implemented and tested.
-- Every streaming inference request creates a UUID conversation with a UI-ready title.
+- Every new streaming inference request creates a UUID conversation with a UI-ready title.
+- Conversation continuation requests append new messages to an existing authorized conversation and create a new inference request under that conversation.
 - Conversation messages persist protected user and assistant content.
 - Reactive repository adapters compile against the approved schema; PostgreSQL integration tests are scheduled for the container verification pass.
 - Metrics, traces, and structured logs exist for critical paths.
