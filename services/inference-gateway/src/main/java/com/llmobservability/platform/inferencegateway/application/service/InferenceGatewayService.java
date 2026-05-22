@@ -314,8 +314,6 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
         ConversationMessage assistantMessage = new ConversationMessage(
                 UUID.randomUUID(),
                 request.conversationId(),
-                request.tenantId(),
-                request.projectId(),
                 MessageRole.ASSISTANT,
                 request.inputMessageCount(),
                 assistantContent,
@@ -446,8 +444,6 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
             messages.add(new ConversationMessage(
                     UUID.randomUUID(),
                     conversationId,
-                    command.tenantId(),
-                    command.projectId(),
                     message.role(),
                     i,
                     message.content(),

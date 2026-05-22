@@ -7,8 +7,6 @@ import java.util.UUID;
 public record ConversationMessage(
         UUID id,
         UUID conversationId,
-        String tenantId,
-        String projectId,
         MessageRole role,
         int sequence,
         String content,
@@ -19,4 +17,3 @@ public record ConversationMessage(
         Instant createdAt
 ) {
 }
-

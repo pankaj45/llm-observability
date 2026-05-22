@@ -299,8 +299,6 @@ Core fields:
 
 - `id`
 - `conversation_id`
-- `tenant_id`
-- `project_id`
 - `role`
 - `sequence`
 - `content`
@@ -314,9 +312,11 @@ Rationale:
 
 - Enables traceability, token accounting, UI display, support workflows, and production debugging.
 - Provides groundwork for later conversation continuity and context windows.
+- Tenant and project scope is inherited through the required `conversation_id` foreign key because messages are part of the conversation aggregate.
 
 Tradeoff:
 
+- Scoped message reads require joining to `conversation` for tenant/project authorization.
 - Raw prompt and completion content are sensitive and require access-control, retention, redaction, and future encryption support.
 
 ### `inference_request`
