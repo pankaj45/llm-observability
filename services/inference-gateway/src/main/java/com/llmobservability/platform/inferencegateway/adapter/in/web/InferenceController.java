@@ -154,5 +154,13 @@ public class InferenceController {
             boolean providerCancellationAttempted,
             boolean providerCancellationSucceeded
     ) {
+        static CancelInferenceResponse from(com.llmobservability.platform.inferencegateway.application.port.in.CancelInferenceResult result) {
+            return new CancelInferenceResponse(
+                    result.requestId(),
+                    result.conversationId(),
+                    result.status().name(),
+                    result.providerCancellationAttempted(),
+                    result.providerCancellationSucceeded());
+        }
     }
 }

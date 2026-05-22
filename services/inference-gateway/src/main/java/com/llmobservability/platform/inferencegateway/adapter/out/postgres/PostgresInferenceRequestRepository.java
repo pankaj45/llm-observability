@@ -6,6 +6,7 @@ import com.llmobservability.platform.inferencegateway.domain.model.InferenceRequ
 import com.llmobservability.platform.inferencegateway.domain.model.InferenceStatus;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Repository;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Instant;
@@ -78,6 +79,31 @@ class PostgresInferenceRequestRepository implements InferenceRequestRepository {
                 .bind("tenantId", tenantId)
                 .bind("projectId", projectId)
                 .bind("idempotencyKey", idempotencyKey));
+    }
+
+    @Override
+    public Flux<InferenceRequest> findByConversationId(UUID conversationId) {
+        return select("WHERE conversation_id = :conversationId ORDER BY created_at ASC, id ASC")
+                .bind("conversationId", conversationId)
+                .map((row, metadata) -> map(row))
+                .all();
+    }
+
+    @Override
+    public Mono<InferenceRequest> findLatestByConversationId(UUID conversationId) {
+        return one(select("WHERE conversation_id = :conversationId ORDER BY created_at DESC, id ASC LIMIT 1")
+                .bind("conversationId", conversationId));
+    }
+
+    @Override
+    public Mono<InferenceRequest> findActiveByConversationId(UUID conversationId) {
+        return one(select("""
+                        WHERE conversation_id = :conversationId
+                          AND status IN ('ACCEPTED', 'STREAMING')
+                        ORDER BY created_at DESC, id ASC
+                        LIMIT 1
+                        """)
+                .bind("conversationId", conversationId));
     }
 
     @Override

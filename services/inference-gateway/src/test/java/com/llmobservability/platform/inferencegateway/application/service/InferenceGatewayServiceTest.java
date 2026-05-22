@@ -1,6 +1,10 @@
 package com.llmobservability.platform.inferencegateway.application.service;
 
 import com.llmobservability.platform.inferencegateway.application.port.in.CancelInferenceCommand;
+import com.llmobservability.platform.inferencegateway.application.port.in.ConversationMessageResult;
+import com.llmobservability.platform.inferencegateway.application.port.in.GetConversationQuery;
+import com.llmobservability.platform.inferencegateway.application.port.in.ListConversationEventsQuery;
+import com.llmobservability.platform.inferencegateway.application.port.in.ListConversationMessagesQuery;
 import com.llmobservability.platform.inferencegateway.application.port.in.ContinueConversationCommand;
 import com.llmobservability.platform.inferencegateway.application.port.in.StartInferenceCommand;
 import com.llmobservability.platform.inferencegateway.application.port.out.ActiveStreamStateStore;
@@ -143,6 +147,176 @@ class InferenceGatewayServiceTest {
     }
 
     @Test
+    void conversationMessagesReturnMetadataAndRawContentAfterScopeValidation() {
+        TestState state = new TestState();
+        InferenceGatewayService service = service(state);
+        UUID conversationId = UUID.randomUUID();
+        Instant now = Instant.now();
+        state.conversations.put(conversationId, new Conversation(
+                conversationId,
+                "tenant-a",
+                "project-a",
+                ConversationStatus.ACTIVE,
+                "Phase four",
+                "FIRST_USER_MESSAGE",
+                now,
+                now,
+                null));
+        state.messages.add(new ConversationMessage(
+                UUID.randomUUID(),
+                conversationId,
+                MessageRole.USER,
+                0,
+                "hello",
+                "hash-user",
+                2,
+                RedactionState.NONE,
+                Map.of("source", "request"),
+                now));
+        state.messages.add(new ConversationMessage(
+                UUID.randomUUID(),
+                conversationId,
+                MessageRole.ASSISTANT,
+                1,
+                "hi there",
+                "hash-assistant",
+                2,
+                RedactionState.NONE,
+                Map.of("source", "gemini"),
+                now.plusMillis(1)));
+
+        StepVerifier.create(service.getConversation(new GetConversationQuery(conversationId, "tenant-a", "project-a")))
+                .assertNext(result -> {
+                    assertThat(result.messageCount()).isEqualTo(2);
+                    assertThat(result.lastMessageAt()).isEqualTo(now.plusMillis(1));
+                })
+                .verifyComplete();
+
+        StepVerifier.create(service.listConversationMessages(new ListConversationMessagesQuery(
+                        conversationId, "tenant-a", "project-a", null, 50)))
+                .assertNext(page -> {
+                    assertThat(page.items()).extracting(ConversationMessageResult::content)
+                            .containsExactly("hello", "hi there");
+                    assertThat(page.nextCursor()).isNull();
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void timelineDerivesMessageAndRequestLifecycleEventsFromCanonicalTables() {
+        TestState state = new TestState();
+        InferenceGatewayService service = service(state);
+        UUID conversationId = UUID.randomUUID();
+        UUID requestId = UUID.randomUUID();
+        Instant now = Instant.now();
+        state.conversations.put(conversationId, new Conversation(
+                conversationId,
+                "tenant-a",
+                "project-a",
+                ConversationStatus.ACTIVE,
+                "Phase four",
+                "FIRST_USER_MESSAGE",
+                now,
+                now,
+                null));
+        state.messages.add(new ConversationMessage(
+                UUID.randomUUID(),
+                conversationId,
+                MessageRole.USER,
+                0,
+                "hello",
+                "hash-user",
+                2,
+                RedactionState.NONE,
+                Map.of("source", "request"),
+                now));
+        state.requests.put(requestId, new InferenceRequest(
+                requestId,
+                "tenant-a",
+                "project-a",
+                conversationId,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "gemini",
+                "gemini-1.5-flash",
+                "timeline-test",
+                InferenceStatus.COMPLETED,
+                true,
+                Map.of(),
+                1,
+                "hash-user",
+                "hash-output",
+                "inference:stream:" + requestId,
+                now.plusMillis(1),
+                now.plusMillis(1),
+                now.plusMillis(2),
+                now.plusMillis(3),
+                null,
+                null,
+                now.plusMillis(3)));
+        state.usages.put(requestId, new InferenceUsage(
+                UUID.randomUUID(),
+                requestId,
+                3,
+                5,
+                8,
+                "tokens",
+                java.math.BigDecimal.ZERO,
+                "USD",
+                now.plusMillis(4)));
+
+        StepVerifier.create(service.listConversationEvents(new ListConversationEventsQuery(
+                        conversationId, "tenant-a", "project-a", null, 50)))
+                .assertNext(page -> assertThat(page.items()).extracting(event -> event.type())
+                        .containsExactly(
+                                "conversation.created",
+                                "conversation.message",
+                                "request.accepted",
+                                "request.streaming",
+                                "request.completed",
+                                "usage.recorded"))
+                .verifyComplete();
+    }
+
+    @Test
+    void continueConversationRejectsConcurrentActiveStream() {
+        TestState state = new TestState();
+        InferenceGatewayService service = service(state);
+        UUID conversationId = UUID.randomUUID();
+        Instant now = Instant.now();
+        state.conversations.put(conversationId, new Conversation(
+                conversationId,
+                "tenant-a",
+                "project-a",
+                ConversationStatus.ACTIVE,
+                "Busy conversation",
+                "FIRST_USER_MESSAGE",
+                now,
+                now,
+                null));
+        InferenceRequest activeRequest = acceptedRequest(conversationId);
+        state.requests.put(activeRequest.id(), activeRequest);
+
+        StepVerifier.create(service.continueConversation(new ContinueConversationCommand(
+                        conversationId,
+                        "tenant-a",
+                        "project-a",
+                        "gemini",
+                        "gemini-1.5-flash",
+                        List.of(new StartInferenceCommand.Message(MessageRole.USER, "Can you continue?")),
+                        Map.of(),
+                        Map.of(),
+                        "client-2",
+                        Map.of(),
+                        "phase4-busy",
+                        "trace-2")))
+                .expectErrorSatisfies(error -> assertThat(error)
+                        .isInstanceOf(ApplicationException.class)
+                        .hasMessageContaining("active stream"))
+                .verify();
+    }
+
+    @Test
     void cancelMarksActiveRequestAndStoresCancellation() {
         TestState state = new TestState();
         InferenceGatewayService service = service(state);
@@ -195,13 +369,17 @@ class InferenceGatewayServiceTest {
     }
 
     private InferenceRequest acceptedRequest() {
+        return acceptedRequest(UUID.randomUUID());
+    }
+
+    private InferenceRequest acceptedRequest(UUID conversationId) {
         UUID requestId = UUID.randomUUID();
         Instant now = Instant.now();
         return new InferenceRequest(
                 requestId,
                 "tenant-a",
                 "project-a",
-                UUID.randomUUID(),
+                conversationId,
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 "gemini",
@@ -245,6 +423,18 @@ class InferenceGatewayServiceTest {
                 public Mono<Conversation> findById(UUID conversationId) {
                     return Mono.justOrEmpty(conversations.get(conversationId));
                 }
+
+                @Override
+                public Flux<Conversation> findByTenantProject(String tenantId, String projectId, ConversationStatus status, Instant beforeUpdatedAt, int limit) {
+                    return Flux.fromIterable(conversations.values().stream()
+                            .filter(conversation -> conversation.tenantId().equals(tenantId))
+                            .filter(conversation -> conversation.projectId().equals(projectId))
+                            .filter(conversation -> status == null || conversation.status() == status)
+                            .filter(conversation -> beforeUpdatedAt == null || conversation.updatedAt().isBefore(beforeUpdatedAt))
+                            .sorted((left, right) -> right.updatedAt().compareTo(left.updatedAt()))
+                            .limit(limit)
+                            .toList());
+                }
             };
         }
 
@@ -268,6 +458,32 @@ class InferenceGatewayServiceTest {
                             .filter(message -> message.conversationId().equals(conversationId))
                             .toList());
                 }
+
+                @Override
+                public Flux<ConversationMessage> findByConversationIdAfterSequence(UUID conversationId, int afterSequence, int limit) {
+                    return Flux.fromIterable(messages.stream()
+                            .filter(message -> message.conversationId().equals(conversationId))
+                            .filter(message -> message.sequence() > afterSequence)
+                            .sorted((left, right) -> Integer.compare(left.sequence(), right.sequence()))
+                            .limit(limit)
+                            .toList());
+                }
+
+                @Override
+                public Mono<Long> countByConversationId(UUID conversationId) {
+                    return Mono.just(messages.stream()
+                            .filter(message -> message.conversationId().equals(conversationId))
+                            .count());
+                }
+
+                @Override
+                public Mono<ConversationMessage> findLatestByConversationId(UUID conversationId) {
+                    return Flux.fromIterable(messages.stream()
+                                    .filter(message -> message.conversationId().equals(conversationId))
+                                    .sorted((left, right) -> Integer.compare(right.sequence(), left.sequence()))
+                                    .toList())
+                            .next();
+                }
             };
         }
 
@@ -290,6 +506,33 @@ class InferenceGatewayServiceTest {
                             .filter(request -> request.tenantId().equals(tenantId)
                                     && request.projectId().equals(projectId)
                                     && request.idempotencyKey().equals(idempotencyKey))
+                            .next();
+                }
+
+                @Override
+                public Flux<InferenceRequest> findByConversationId(UUID conversationId) {
+                    return Flux.fromIterable(requests.values().stream()
+                            .filter(request -> request.conversationId().equals(conversationId))
+                            .sorted((left, right) -> left.createdAt().compareTo(right.createdAt()))
+                            .toList());
+                }
+
+                @Override
+                public Mono<InferenceRequest> findLatestByConversationId(UUID conversationId) {
+                    return Flux.fromIterable(requests.values().stream()
+                                    .filter(request -> request.conversationId().equals(conversationId))
+                                    .sorted((left, right) -> right.createdAt().compareTo(left.createdAt()))
+                                    .toList())
+                            .next();
+                }
+
+                @Override
+                public Mono<InferenceRequest> findActiveByConversationId(UUID conversationId) {
+                    return Flux.fromIterable(requests.values().stream()
+                                    .filter(request -> request.conversationId().equals(conversationId))
+                                    .filter(InferenceRequest::active)
+                                    .sorted((left, right) -> right.createdAt().compareTo(left.createdAt()))
+                                    .toList())
                             .next();
                 }
 
@@ -383,6 +626,21 @@ class InferenceGatewayServiceTest {
             return new ActiveStreamStateStore() {
                 @Override
                 public Mono<Void> register(UUID requestId, UUID conversationId, Duration ttl) {
+                    return Mono.empty();
+                }
+
+                @Override
+                public Mono<Void> appendEvent(UUID requestId, UUID conversationId, StreamEvent event, Duration ttl) {
+                    return Mono.empty();
+                }
+
+                @Override
+                public Flux<StreamEvent> replayEvents(UUID conversationId, String afterEventId) {
+                    return Flux.empty();
+                }
+
+                @Override
+                public Mono<UUID> findActiveRequestId(UUID conversationId) {
                     return Mono.empty();
                 }
 

@@ -2,71 +2,197 @@ openapi: 3.1.0
 info:
   title: Conversation API
   version: 1.0.0
-  description: Contract inventory for future conversation workflows.
+  description: Phase 4 contract for conversation metadata, message history, timeline replay, and active stream cancellation.
 servers:
   - url: http://localhost:8080
 paths:
   /v1/conversations:
-    post:
-      summary: Create a conversation
-      operationId: createConversation
-      tags:
-        - conversation
-      responses:
-        "501":
-          description: Not implemented during phase 1 platform bootstrap
     get:
       summary: List conversations
       operationId: listConversations
       tags:
         - conversation
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/ProjectId"
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ConversationStatus"
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            description: Opaque server-owned pagination cursor.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
       responses:
-        "501":
-          description: Not implemented during phase 1 platform bootstrap
-  /v1/conversations/{conversationId}/messages:
-    post:
-      summary: Append messages to a conversation
-      operationId: appendConversationMessages
+        "200":
+          description: Conversation page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationMetadataPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/conversations/{conversationId}:
+    get:
+      summary: Get conversation metadata
+      operationId: getConversation
       tags:
         - conversation
       parameters:
         - $ref: "#/components/parameters/ConversationId"
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/ProjectId"
       responses:
-        "501":
-          description: Not implemented during phase 1 platform bootstrap
+        "200":
+          description: Conversation metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationMetadata"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/conversations/{conversationId}/messages:
+    get:
+      summary: List persisted conversation messages
+      operationId: listConversationMessages
+      tags:
+        - conversation
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/ProjectId"
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+            description: Opaque server-owned cursor. Events before and including this cursor are omitted.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Conversation message page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationMessagePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/conversations/{conversationId}/messages/stream:
+    post:
+      summary: Continue an existing conversation with a streaming inference request
+      operationId: continueConversationStream
+      tags:
+        - conversation
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContinueConversationStreamRequest"
+      responses:
+        "200":
+          description: Streaming conversation continuation response
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /v1/conversations/{conversationId}/events:
     get:
-      summary: Resume conversation event stream
-      operationId: resumeConversation
+      summary: List or stream conversation timeline events
+      operationId: listConversationEvents
       tags:
         - conversation
       parameters:
         - $ref: "#/components/parameters/ConversationId"
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/ProjectId"
+        - name: mode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - history
+              - stream
+            default: history
+          description: Use history for JSON pages and stream for text/event-stream active replay.
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+            description: Opaque cursor for history mode or last SSE event id for stream mode.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
       responses:
-        "501":
-          description: Not implemented during phase 1 platform bootstrap
-  /v1/conversations/{conversationId}/cancellation:
-    post:
-      summary: Cancel active conversation work
-      operationId: cancelConversation
+        "200":
+          description: Conversation timeline page or active replay stream
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationTimelineEventPage"
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/conversations/{conversationId}/stream:
+    delete:
+      summary: Cancel active stream work for a conversation
+      operationId: cancelConversationStream
       tags:
         - conversation
       parameters:
         - $ref: "#/components/parameters/ConversationId"
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/ProjectId"
+        - name: X-Requested-By
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: X-Cancel-Reason
+          in: header
+          required: false
+          schema:
+            type: string
       responses:
-        "501":
-          description: Not implemented during phase 1 platform bootstrap
-  /v1/conversations/{conversationId}/summary:
-    get:
-      summary: Get conversation summary
-      operationId: getConversationSummary
-      tags:
-        - conversation
-      parameters:
-        - $ref: "#/components/parameters/ConversationId"
-      responses:
-        "501":
-          description: Not implemented during phase 1 platform bootstrap
+        "200":
+          description: Cancellation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelConversationStreamResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
 components:
   parameters:
     ConversationId:
@@ -75,5 +201,346 @@ components:
       required: true
       schema:
         type: string
+        format: uuid
+    TenantId:
+      name: tenantId
+      in: query
+      required: true
+      schema:
+        type: string
         minLength: 1
-
+    ProjectId:
+      name: projectId
+      in: query
+      required: true
+      schema:
+        type: string
+        minLength: 1
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    ConversationStatus:
+      type: string
+      enum:
+        - ACTIVE
+        - CANCELLED
+    InferenceStatus:
+      type: string
+      enum:
+        - ACCEPTED
+        - STREAMING
+        - COMPLETED
+        - CANCELLED
+        - FAILED
+    MessageRole:
+      type: string
+      enum:
+        - SYSTEM
+        - USER
+        - ASSISTANT
+        - TOOL
+    RedactionState:
+      type: string
+      enum:
+        - NONE
+        - REDACTED
+    ConversationMetadataPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConversationMetadata"
+        nextCursor:
+          type:
+            - string
+            - "null"
+    ConversationMetadata:
+      type: object
+      additionalProperties: false
+      required:
+        - conversationId
+        - tenantId
+        - projectId
+        - status
+        - title
+        - titleSource
+        - createdAt
+        - updatedAt
+        - messageCount
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+        projectId:
+          type: string
+        status:
+          $ref: "#/components/schemas/ConversationStatus"
+        title:
+          type: string
+        titleSource:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        cancelledAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        lastMessageAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        messageCount:
+          type: integer
+          minimum: 0
+        activeRequestId:
+          type:
+            - string
+            - "null"
+          format: uuid
+        latestRequestStatus:
+          oneOf:
+            - $ref: "#/components/schemas/InferenceStatus"
+            - type: "null"
+    ConversationMessagePage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConversationMessage"
+        nextCursor:
+          type:
+            - string
+            - "null"
+    ConversationMessage:
+      type: object
+      additionalProperties: false
+      required:
+        - messageId
+        - conversationId
+        - role
+        - sequence
+        - content
+        - contentHash
+        - estimatedTokens
+        - redactionState
+        - metadata
+        - createdAt
+        - cursor
+      properties:
+        messageId:
+          type: string
+          format: uuid
+        conversationId:
+          type: string
+          format: uuid
+        role:
+          $ref: "#/components/schemas/MessageRole"
+        sequence:
+          type: integer
+          minimum: 0
+        content:
+          type: string
+        contentHash:
+          type: string
+        estimatedTokens:
+          type: integer
+          minimum: 0
+        redactionState:
+          $ref: "#/components/schemas/RedactionState"
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        cursor:
+          type: string
+    ConversationTimelineEventPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConversationTimelineEvent"
+        nextCursor:
+          type:
+            - string
+            - "null"
+    ConversationTimelineEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - type
+        - conversationId
+        - sequence
+        - occurredAt
+        - data
+        - cursor
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum:
+            - conversation.created
+            - conversation.message
+            - request.accepted
+            - request.streaming
+            - request.completed
+            - request.cancelled
+            - request.failed
+            - request.error
+            - request.cancellation
+            - usage.recorded
+        conversationId:
+          type: string
+          format: uuid
+        requestId:
+          type:
+            - string
+            - "null"
+          format: uuid
+        messageId:
+          type:
+            - string
+            - "null"
+          format: uuid
+        sequence:
+          type: integer
+          minimum: 0
+        occurredAt:
+          type: string
+          format: date-time
+        data:
+          type: object
+          additionalProperties: true
+        cursor:
+          type: string
+    ContinueConversationStreamRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - tenantId
+        - projectId
+        - provider
+        - model
+        - messages
+        - parameters
+        - idempotencyKey
+      properties:
+        tenantId:
+          type: string
+          minLength: 1
+        projectId:
+          type: string
+          minLength: 1
+        provider:
+          type: string
+          const: gemini
+        model:
+          type: string
+          minLength: 1
+        messages:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/InferenceMessage"
+        parameters:
+          type: object
+          additionalProperties: true
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        clientRequestId:
+          type: string
+        streamOptions:
+          type: object
+          additionalProperties: true
+        idempotencyKey:
+          type: string
+          minLength: 1
+    InferenceMessage:
+      type: object
+      additionalProperties: false
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+          enum:
+            - system
+            - user
+            - assistant
+            - tool
+        content:
+          type: string
+          minLength: 1
+    CancelConversationStreamResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - requestId
+        - conversationId
+        - status
+        - providerCancellationAttempted
+        - providerCancellationSucceeded
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        conversationId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - CANCELLED
+        providerCancellationAttempted:
+          type: boolean
+        providerCancellationSucceeded:
+          type: boolean
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+            message:
+              type: string

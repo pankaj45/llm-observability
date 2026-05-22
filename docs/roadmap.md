@@ -208,6 +208,10 @@ Status as of 2026-05-23: implemented as an ingestion-worker MVP for inference li
 
 ## Phase 4: Conversation Continuity
 
+Detailed phase spec: [Phase 04: Conversation Continuity and Stream Replay](specs/phase-04-conversation-continuity.md).
+
+Status as of 2026-05-23: implemented in `services/inference-gateway` with conversation metadata, message history, derived timeline, active replay, conversation cancellation, contract validation, and focused service/controller tests. Durable token-level replay remains deferred by ADR-0014.
+
 ### Goals
 
 - Support resumable conversations and stream reconnection after client disconnects.

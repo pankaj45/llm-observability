@@ -2,12 +2,22 @@ package com.llmobservability.platform.inferencegateway.application.service;
 
 import com.llmobservability.platform.inferencegateway.application.port.in.CancelInferenceCommand;
 import com.llmobservability.platform.inferencegateway.application.port.in.CancelInferenceResult;
+import com.llmobservability.platform.inferencegateway.application.port.in.CancelConversationStreamCommand;
+import com.llmobservability.platform.inferencegateway.application.port.in.ConversationMessageResult;
+import com.llmobservability.platform.inferencegateway.application.port.in.ConversationMetadataResult;
+import com.llmobservability.platform.inferencegateway.application.port.in.ConversationTimelineEventResult;
 import com.llmobservability.platform.inferencegateway.application.port.in.ContinueConversationCommand;
 import com.llmobservability.platform.inferencegateway.application.port.in.ErrorSummary;
+import com.llmobservability.platform.inferencegateway.application.port.in.GetConversationQuery;
 import com.llmobservability.platform.inferencegateway.application.port.in.GetInferenceStatusQuery;
 import com.llmobservability.platform.inferencegateway.application.port.in.InferenceGatewayUseCase;
 import com.llmobservability.platform.inferencegateway.application.port.in.InferenceStatusResult;
+import com.llmobservability.platform.inferencegateway.application.port.in.ListConversationEventsQuery;
+import com.llmobservability.platform.inferencegateway.application.port.in.ListConversationMessagesQuery;
+import com.llmobservability.platform.inferencegateway.application.port.in.ListConversationsQuery;
+import com.llmobservability.platform.inferencegateway.application.port.in.PagedResult;
 import com.llmobservability.platform.inferencegateway.application.port.in.StartInferenceCommand;
+import com.llmobservability.platform.inferencegateway.application.port.in.StreamConversationEventsQuery;
 import com.llmobservability.platform.inferencegateway.application.port.in.UsageSummary;
 import com.llmobservability.platform.inferencegateway.application.port.out.ActiveStreamStateStore;
 import com.llmobservability.platform.inferencegateway.application.port.out.ConversationMessageRepository;
@@ -44,8 +54,11 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -53,9 +66,14 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 
 @Service
 public class InferenceGatewayService implements InferenceGatewayUseCase {
+    private static final int DEFAULT_PAGE_LIMIT = 50;
+    private static final int MAX_PAGE_LIMIT = 200;
+
     private final ConversationRepository conversationRepository;
     private final ConversationMessageRepository conversationMessageRepository;
     private final InferenceRequestRepository inferenceRequestRepository;
@@ -135,6 +153,55 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
     }
 
     @Override
+    public Mono<PagedResult<ConversationMetadataResult>> listConversations(ListConversationsQuery query) {
+        int limit = normalizeLimit(query.limit());
+        Instant beforeUpdatedAt = CursorCodec.decodeInstant("conversation", query.cursor());
+        return conversationRepository.findByTenantProject(query.tenantId(), query.projectId(), query.status(), beforeUpdatedAt, limit + 1)
+                .flatMap(this::toMetadataResult)
+                .collectList()
+                .map(items -> page(items, limit, item -> CursorCodec.encode("conversation", item.updatedAt().toString())));
+    }
+
+    @Override
+    public Mono<ConversationMetadataResult> getConversation(GetConversationQuery query) {
+        return validateConversationAccess(query.conversationId(), query.tenantId(), query.projectId())
+                .flatMap(this::toMetadataResult);
+    }
+
+    @Override
+    public Mono<PagedResult<ConversationMessageResult>> listConversationMessages(ListConversationMessagesQuery query) {
+        int limit = normalizeLimit(query.limit());
+        int afterSequence = CursorCodec.decodeInt("message", query.after(), -1);
+        return validateConversationAccess(query.conversationId(), query.tenantId(), query.projectId())
+                .thenMany(conversationMessageRepository.findByConversationIdAfterSequence(query.conversationId(), afterSequence, limit + 1))
+                .map(this::toMessageResult)
+                .collectList()
+                .map(items -> page(items, limit, ConversationMessageResult::cursor));
+    }
+
+    @Override
+    public Mono<PagedResult<ConversationTimelineEventResult>> listConversationEvents(ListConversationEventsQuery query) {
+        int limit = normalizeLimit(query.limit());
+        String afterSortKey = CursorCodec.decode("timeline", query.after());
+        return validateConversationAccess(query.conversationId(), query.tenantId(), query.projectId())
+                .then(loadTimeline(query.conversationId()))
+                .map(events -> events.stream()
+                        .filter(event -> afterSortKey == null || CursorCodec.decode("timeline", event.cursor()).compareTo(afterSortKey) > 0)
+                        .limit(limit + 1L)
+                        .toList())
+                .map(items -> page(items, limit, ConversationTimelineEventResult::cursor));
+    }
+
+    @Override
+    public Flux<StreamEvent> streamConversationEvents(StreamConversationEventsQuery query) {
+        return validateConversationAccess(query.conversationId(), query.tenantId(), query.projectId())
+                .thenMany(activeStreamStateStore.findActiveRequestId(query.conversationId())
+                        .flatMapMany(activeRequestId -> followActiveStreamEvents(query.conversationId(), query.after()))
+                        .switchIfEmpty(loadTimeline(query.conversationId()).flatMapMany(events -> Flux.fromIterable(events)
+                                .map(this::toStreamEvent))));
+    }
+
+    @Override
     public Mono<CancelInferenceResult> cancel(CancelInferenceCommand command) {
         Instant now = Instant.now();
         return inferenceRequestRepository.findById(command.requestId())
@@ -183,6 +250,17 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                         .description("Accepted inference stream cancellations")
                         .register(meterRegistry)
                         .increment());
+    }
+
+    @Override
+    public Mono<CancelInferenceResult> cancelConversationStream(CancelConversationStreamCommand command) {
+        return validateConversationAccess(command.conversationId(), command.tenantId(), command.projectId())
+                .then(inferenceRequestRepository.findActiveByConversationId(command.conversationId()))
+                .switchIfEmpty(Mono.error(new ApplicationException(
+                        ErrorCode.STREAM_CANCELLED,
+                        FailureStage.STREAMING,
+                        "Conversation has no active stream")))
+                .flatMap(request -> cancel(new CancelInferenceCommand(request.id(), command.requestedBy(), command.reason())));
     }
 
     @Override
@@ -305,9 +383,14 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                                 FailureStage.VALIDATION,
                                 "Conversation is not active"));
                     }
-                    return conversationMessageRepository.findByConversationId(conversation.id())
-                            .collectList()
-                            .flatMap(existingMessages -> prepareContinuation(command, requestId, now, redisStreamKey, existingMessages));
+                    return inferenceRequestRepository.findActiveByConversationId(conversation.id())
+                            .flatMap(activeRequest -> Mono.<PreparedContinuation>error(new ApplicationException(
+                                    ErrorCode.VALIDATION_INVALID_REQUEST,
+                                    FailureStage.VALIDATION,
+                                    "Conversation already has an active stream")))
+                            .switchIfEmpty(conversationMessageRepository.findByConversationId(conversation.id())
+                                    .collectList()
+                                    .flatMap(existingMessages -> prepareContinuation(command, requestId, now, redisStreamKey, existingMessages)));
                 });
     }
 
@@ -410,12 +493,15 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
 
         return lifecycle
                 .publish(shared -> Flux.merge(shared, heartbeat(request, execution.traceId(), sequence).takeUntilOther(shared.ignoreElements())))
+                .concatMap(event -> activeStreamStateStore.appendEvent(request.id(), request.conversationId(), event, properties.activeStreamTtl())
+                        .onErrorResume(error -> Mono.empty())
+                        .thenReturn(event))
                 .onErrorResume(error -> {
                     if (error instanceof ApplicationException applicationException
                             && applicationException.errorCode() == ErrorCode.STREAM_CANCELLED) {
-                        return cancelStream(request, sequence, execution.traceId());
+                        return cancelStream(request, assistantContent.toString(), sequence, execution.traceId());
                     }
-                    return failRequest(request, error, sequence, execution.traceId());
+                    return failRequest(request, assistantContent.toString(), error, sequence, execution.traceId());
                 })
                 .doFinally(signalType -> activeStreamStateStore.clear(request.id()).subscribe());
     }
@@ -432,7 +518,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                 outputHash,
                 estimateTokens(assistantContent),
                 RedactionState.NONE,
-                Map.of("source", "gemini"),
+                Map.of("source", "gemini", "partial", "false"),
                 now);
         InferenceUsage usage = new InferenceUsage(
                 UUID.randomUUID(),
@@ -465,9 +551,10 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                         "totalTokens", inputTokens + outputTokens)));
     }
 
-    private Flux<StreamEvent> cancelStream(InferenceRequest request, AtomicLong sequence, String traceId) {
+    private Flux<StreamEvent> cancelStream(InferenceRequest request, String assistantContent, AtomicLong sequence, String traceId) {
         Instant now = Instant.now();
-        return inferenceRequestRepository.markCancelled(request.id(), now)
+        return persistPartialAssistantMessage(request, assistantContent, "cancelled", now)
+                .then(inferenceRequestRepository.markCancelled(request.id(), now))
                 .then(publish("inference.cancelled", request, traceId, Map.of(
                         "requestId", request.id().toString(),
                         "conversationId", request.conversationId().toString(),
@@ -478,7 +565,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                         "status", InferenceStatus.CANCELLED.name()))));
     }
 
-    private Flux<StreamEvent> failRequest(InferenceRequest request, Throwable throwable, AtomicLong sequence, String traceId) {
+    private Flux<StreamEvent> failRequest(InferenceRequest request, String assistantContent, Throwable throwable, AtomicLong sequence, String traceId) {
         ApplicationException exception = throwable instanceof ApplicationException appException
                 ? appException
                 : new ApplicationException(
@@ -499,6 +586,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                 exception.retryable(),
                 now);
         return inferenceErrorRepository.save(error)
+                .then(persistPartialAssistantMessage(request, assistantContent, "failed", now))
                 .then(inferenceRequestRepository.markFailed(request.id(), now))
                 .then(publish("inference.failed", request, traceId, Map.of(
                         "requestId", request.id().toString(),
@@ -513,6 +601,24 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                         "status", InferenceStatus.FAILED.name(),
                         "errorCode", exception.errorCode().code(),
                         "message", exception.getMessage()))));
+    }
+
+    private Mono<Void> persistPartialAssistantMessage(InferenceRequest request, String assistantContent, String terminalState, Instant now) {
+        if (assistantContent == null || assistantContent.isBlank()) {
+            return Mono.empty();
+        }
+        ConversationMessage assistantMessage = new ConversationMessage(
+                UUID.randomUUID(),
+                request.conversationId(),
+                MessageRole.ASSISTANT,
+                request.inputMessageCount(),
+                assistantContent,
+                ContentHasher.sha256(assistantContent),
+                estimateTokens(assistantContent),
+                RedactionState.NONE,
+                Map.of("source", "gemini", "partial", "true", "terminalState", terminalState),
+                now);
+        return conversationMessageRepository.save(assistantMessage);
     }
 
     private Flux<StreamEvent> heartbeat(InferenceRequest request, String traceId, AtomicLong sequence) {
@@ -713,6 +819,242 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                 request.requestMetadata());
     }
 
+    private Mono<Conversation> validateConversationAccess(UUID conversationId, String tenantId, String projectId) {
+        return conversationRepository.findById(conversationId)
+                .filter(conversation -> conversation.tenantId().equals(tenantId) && conversation.projectId().equals(projectId))
+                .switchIfEmpty(Mono.error(new ApplicationException(
+                        ErrorCode.CONVERSATION_NOT_FOUND,
+                        FailureStage.VALIDATION,
+                        "Conversation was not found")));
+    }
+
+    private Mono<ConversationMetadataResult> toMetadataResult(Conversation conversation) {
+        return Mono.zip(
+                        conversationMessageRepository.countByConversationId(conversation.id()).defaultIfEmpty(0L),
+                        conversationMessageRepository.findLatestByConversationId(conversation.id()).map(ConversationMessage::createdAt).defaultIfEmpty(conversation.updatedAt()),
+                        inferenceRequestRepository.findActiveByConversationId(conversation.id()).map(InferenceRequest::id).defaultIfEmpty(nullUuid()),
+                        inferenceRequestRepository.findLatestByConversationId(conversation.id()).map(InferenceRequest::status).defaultIfEmpty(InferenceStatus.ACCEPTED)
+                )
+                .map(tuple -> new ConversationMetadataResult(
+                        conversation.id(),
+                        conversation.tenantId(),
+                        conversation.projectId(),
+                        conversation.status(),
+                        conversation.title(),
+                        conversation.titleSource(),
+                        conversation.createdAt(),
+                        conversation.updatedAt(),
+                        conversation.cancelledAt(),
+                        tuple.getT2(),
+                        tuple.getT1(),
+                        nullUuid().equals(tuple.getT3()) ? null : tuple.getT3(),
+                        tuple.getT4()));
+    }
+
+    private ConversationMessageResult toMessageResult(ConversationMessage message) {
+        return new ConversationMessageResult(
+                message.id(),
+                message.conversationId(),
+                message.role(),
+                message.sequence(),
+                message.content(),
+                message.contentHash(),
+                message.estimatedTokens(),
+                message.redactionState(),
+                message.metadata(),
+                message.createdAt(),
+                CursorCodec.encode("message", Integer.toString(message.sequence())));
+    }
+
+    private Mono<List<ConversationTimelineEventResult>> loadTimeline(UUID conversationId) {
+        Mono<Conversation> conversation = conversationRepository.findById(conversationId);
+        Mono<List<ConversationMessage>> messages = conversationMessageRepository.findByConversationId(conversationId).collectList();
+        Mono<List<InferenceRequest>> requests = inferenceRequestRepository.findByConversationId(conversationId).collectList();
+        return Mono.zip(conversation, messages, requests)
+                .flatMap(tuple -> Flux.concat(
+                                Flux.just(conversationCreatedTimelineEvent(tuple.getT1())),
+                                Flux.fromIterable(tuple.getT2()).map(this::messageTimelineEvent),
+                                Flux.fromIterable(tuple.getT3()).flatMap(this::requestTimelineEvents)
+                        )
+                        .sort(Comparator.comparing(event -> CursorCodec.decode("timeline", event.cursor())))
+                        .collectList());
+    }
+
+    private ConversationTimelineEventResult conversationCreatedTimelineEvent(Conversation conversation) {
+        return timelineEvent(
+                "conversation.created:" + conversation.id(),
+                "conversation.created",
+                conversation.id(),
+                null,
+                null,
+                0,
+                conversation.createdAt(),
+                0,
+                Map.of(
+                        "status", conversation.status().name(),
+                        "title", conversation.title(),
+                        "titleSource", conversation.titleSource()));
+    }
+
+    private ConversationTimelineEventResult messageTimelineEvent(ConversationMessage message) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("role", message.role().name());
+        data.put("sequence", message.sequence());
+        data.put("content", message.content());
+        data.put("contentHash", message.contentHash());
+        data.put("estimatedTokens", message.estimatedTokens());
+        data.put("redactionState", message.redactionState().name());
+        data.put("metadata", message.metadata());
+        String id = "message:" + message.id();
+        return timelineEvent(id, "conversation.message", message.conversationId(), null, message.id(), message.sequence(), message.createdAt(), 20, data);
+    }
+
+    private Flux<ConversationTimelineEventResult> requestTimelineEvents(InferenceRequest request) {
+        Flux<ConversationTimelineEventResult> lifecycle = Flux.fromIterable(requestLifecycleEvents(request));
+        Flux<ConversationTimelineEventResult> usage = inferenceUsageRepository.findByRequestId(request.id())
+                .map(value -> usageTimelineEvent(request, value))
+                .flux();
+        Flux<ConversationTimelineEventResult> error = inferenceErrorRepository.findLatest(request.id())
+                .map(value -> errorTimelineEvent(request, value))
+                .flux();
+        Flux<ConversationTimelineEventResult> cancellation = inferenceCancellationRepository.findLatest(request.id())
+                .map(value -> cancellationTimelineEvent(request, value))
+                .flux();
+        return Flux.concat(lifecycle, usage, error, cancellation);
+    }
+
+    private List<ConversationTimelineEventResult> requestLifecycleEvents(InferenceRequest request) {
+        List<ConversationTimelineEventResult> events = new ArrayList<>();
+        events.add(requestTimelineEvent(request, "request.accepted", request.createdAt(), 10, Map.of(
+                "status", InferenceStatus.ACCEPTED.name(),
+                "provider", request.providerKey(),
+                "model", request.modelKey(),
+                "inputMessageCount", request.inputMessageCount(),
+                "inputContentHash", request.inputContentHash())));
+        if (request.firstTokenAt() != null) {
+            events.add(requestTimelineEvent(request, "request.streaming", request.firstTokenAt(), 30, Map.of(
+                    "status", InferenceStatus.STREAMING.name())));
+        }
+        if (request.completedAt() != null) {
+            events.add(requestTimelineEvent(request, "request.completed", request.completedAt(), 40, Map.of(
+                    "status", InferenceStatus.COMPLETED.name(),
+                    "outputContentHash", request.outputContentHash())));
+        }
+        if (request.cancelledAt() != null) {
+            events.add(requestTimelineEvent(request, "request.cancelled", request.cancelledAt(), 50, Map.of(
+                    "status", InferenceStatus.CANCELLED.name())));
+        }
+        if (request.failedAt() != null) {
+            events.add(requestTimelineEvent(request, "request.failed", request.failedAt(), 60, Map.of(
+                    "status", InferenceStatus.FAILED.name())));
+        }
+        return events;
+    }
+
+    private ConversationTimelineEventResult usageTimelineEvent(InferenceRequest request, InferenceUsage usage) {
+        return requestTimelineEvent(request, "usage.recorded", usage.createdAt(), 45, Map.of(
+                "inputTokens", usage.inputTokens(),
+                "outputTokens", usage.outputTokens(),
+                "totalTokens", usage.totalTokens(),
+                "providerReportedUnits", usage.providerReportedUnits(),
+                "estimatedCostAmount", usage.estimatedCostAmount(),
+                "estimatedCostCurrency", usage.estimatedCostCurrency()));
+    }
+
+    private ConversationTimelineEventResult errorTimelineEvent(InferenceRequest request, InferenceError error) {
+        return requestTimelineEvent(request, "request.error", error.createdAt(), 65, Map.of(
+                "failureStage", error.failureStage().name(),
+                "errorCode", error.errorCode(),
+                "message", error.message(),
+                "retryable", error.retryable()));
+    }
+
+    private ConversationTimelineEventResult cancellationTimelineEvent(InferenceRequest request, InferenceCancellation cancellation) {
+        return requestTimelineEvent(request, "request.cancellation", cancellation.createdAt(), 55, Map.of(
+                "requestedBy", cancellation.requestedBy(),
+                "reason", cancellation.reason(),
+                "providerCancellationAttempted", cancellation.providerCancellationAttempted(),
+                "providerCancellationSucceeded", cancellation.providerCancellationSucceeded()));
+    }
+
+    private ConversationTimelineEventResult requestTimelineEvent(InferenceRequest request, String type, Instant occurredAt, int rank, Map<String, Object> data) {
+        return timelineEvent(
+                type + ":" + request.id(),
+                type,
+                request.conversationId(),
+                request.id(),
+                null,
+                rank,
+                occurredAt,
+                rank,
+                data);
+    }
+
+    private ConversationTimelineEventResult timelineEvent(
+            String id,
+            String type,
+            UUID conversationId,
+            UUID requestId,
+            UUID messageId,
+            long sequence,
+            Instant occurredAt,
+            int rank,
+            Map<String, Object> data
+    ) {
+        String sortKey = occurredAt.toString() + "|" + String.format("%03d", rank) + "|" + id;
+        return new ConversationTimelineEventResult(
+                id,
+                type,
+                conversationId,
+                requestId,
+                messageId,
+                sequence,
+                occurredAt,
+                data,
+                CursorCodec.encode("timeline", sortKey));
+    }
+
+    private StreamEvent toStreamEvent(ConversationTimelineEventResult event) {
+        return new StreamEvent(
+                event.id(),
+                StreamEventType.MESSAGE_DELTA,
+                event.requestId(),
+                event.conversationId(),
+                null,
+                event.sequence(),
+                event.occurredAt(),
+                Map.of("type", event.type(), "timeline", event.data()));
+    }
+
+    private Flux<StreamEvent> followActiveStreamEvents(UUID conversationId, String afterEventId) {
+        AtomicReference<String> lastSeenEventId = new AtomicReference<>(afterEventId);
+        Flux<StreamEvent> replay = activeStreamStateStore.replayEvents(conversationId, afterEventId)
+                .doOnNext(event -> lastSeenEventId.set(event.id()));
+        Flux<StreamEvent> follow = Flux.interval(properties.streamHeartbeat())
+                .flatMap(tick -> activeStreamStateStore.findActiveRequestId(conversationId)
+                        .flatMapMany(activeRequestId -> activeStreamStateStore.replayEvents(conversationId, lastSeenEventId.get())
+                                .doOnNext(event -> lastSeenEventId.set(event.id()))));
+        return Flux.concat(replay, follow);
+    }
+
+    private <T> PagedResult<T> page(List<T> values, int limit, Function<T, String> cursorExtractor) {
+        boolean hasMore = values.size() > limit;
+        List<T> items = hasMore ? values.subList(0, limit) : values;
+        String nextCursor = hasMore && !items.isEmpty() ? cursorExtractor.apply(items.getLast()) : null;
+        return new PagedResult<>(items, nextCursor);
+    }
+
+    private int normalizeLimit(int requestedLimit) {
+        if (requestedLimit <= 0) {
+            return DEFAULT_PAGE_LIMIT;
+        }
+        return Math.min(requestedLimit, MAX_PAGE_LIMIT);
+    }
+
+    private UUID nullUuid() {
+        return new UUID(0L, 0L);
+    }
+
     private InferenceUsage emptyUsage(UUID requestId) {
         return new InferenceUsage(null, null, 0, 0, 0, null, null, null, null);
     }
@@ -743,5 +1085,48 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
             List<StartInferenceCommand.Message> providerMessages,
             String conversationState
     ) {
+    }
+
+    private static final class CursorCodec {
+        private CursorCodec() {
+        }
+
+        static String encode(String namespace, String value) {
+            String payload = namespace + ":v1:" + value;
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(payload.getBytes(StandardCharsets.UTF_8));
+        }
+
+        static String decode(String namespace, String cursor) {
+            if (cursor == null || cursor.isBlank()) {
+                return null;
+            }
+            String decoded;
+            try {
+                decoded = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
+            } catch (IllegalArgumentException exception) {
+                throw new ApplicationException(
+                        ErrorCode.VALIDATION_INVALID_REQUEST,
+                        FailureStage.VALIDATION,
+                        "Invalid cursor");
+            }
+            String prefix = namespace + ":v1:";
+            if (!decoded.startsWith(prefix)) {
+                throw new ApplicationException(
+                        ErrorCode.VALIDATION_INVALID_REQUEST,
+                        FailureStage.VALIDATION,
+                        "Invalid cursor");
+            }
+            return decoded.substring(prefix.length());
+        }
+
+        static int decodeInt(String namespace, String cursor, int defaultValue) {
+            String decoded = decode(namespace, cursor);
+            return decoded == null ? defaultValue : Integer.parseInt(decoded);
+        }
+
+        static Instant decodeInstant(String namespace, String cursor) {
+            String decoded = decode(namespace, cursor);
+            return decoded == null ? null : Instant.parse(decoded);
+        }
     }
 }

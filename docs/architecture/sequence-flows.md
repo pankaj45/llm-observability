@@ -153,7 +153,7 @@ sequenceDiagram
         PG-->>Gateway: Persisted timeline
         Gateway-->>Client: Replay persisted events
     end
-    Gateway->>Kafka: Publish conversation.resumed
+    Note over Gateway,Kafka: Phase 4 does not publish conversation.* Kafka events
 ```
 
 ## Analytics Query

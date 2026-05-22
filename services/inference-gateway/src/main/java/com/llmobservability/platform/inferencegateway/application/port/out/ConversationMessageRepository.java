@@ -13,5 +13,10 @@ public interface ConversationMessageRepository {
     Mono<Void> save(ConversationMessage message);
 
     Flux<ConversationMessage> findByConversationId(UUID conversationId);
-}
 
+    Flux<ConversationMessage> findByConversationIdAfterSequence(UUID conversationId, int afterSequence, int limit);
+
+    Mono<Long> countByConversationId(UUID conversationId);
+
+    Mono<ConversationMessage> findLatestByConversationId(UUID conversationId);
+}

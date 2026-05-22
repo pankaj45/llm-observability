@@ -66,17 +66,66 @@ class PostgresConversationMessageRepository implements ConversationMessageReposi
                         ORDER BY sequence ASC, created_at ASC
                         """)
                 .bind("conversationId", conversationId)
-                .map((row, metadata) -> new ConversationMessage(
-                        PostgresBindingSupport.uuid(row, "id"),
-                        PostgresBindingSupport.uuid(row, "conversation_id"),
-                        MessageRole.valueOf(PostgresBindingSupport.string(row, "role")),
-                        PostgresBindingSupport.integer(row, "sequence"),
-                        PostgresBindingSupport.string(row, "content"),
-                        PostgresBindingSupport.string(row, "content_hash"),
-                        PostgresBindingSupport.integer(row, "estimated_tokens"),
-                        RedactionState.valueOf(PostgresBindingSupport.string(row, "redaction_state")),
-                        PostgresBindingSupport.stringMap(objectMapper, PostgresBindingSupport.string(row, "metadata")),
-                        PostgresBindingSupport.instant(row, "created_at")))
+                .map((row, metadata) -> map(row))
                 .all();
+    }
+
+    @Override
+    public Flux<ConversationMessage> findByConversationIdAfterSequence(UUID conversationId, int afterSequence, int limit) {
+        return databaseClient.sql("""
+                        SELECT id, conversation_id, role, sequence, content, content_hash,
+                               estimated_tokens, redaction_state, metadata::text AS metadata, created_at
+                        FROM conversation_message
+                        WHERE conversation_id = :conversationId
+                          AND sequence > :afterSequence
+                        ORDER BY sequence ASC, created_at ASC
+                        LIMIT :limit
+                        """)
+                .bind("conversationId", conversationId)
+                .bind("afterSequence", afterSequence)
+                .bind("limit", limit)
+                .map((row, metadata) -> map(row))
+                .all();
+    }
+
+    @Override
+    public Mono<Long> countByConversationId(UUID conversationId) {
+        return databaseClient.sql("""
+                        SELECT COUNT(*) AS message_count
+                        FROM conversation_message
+                        WHERE conversation_id = :conversationId
+                        """)
+                .bind("conversationId", conversationId)
+                .map((row, metadata) -> row.get("message_count", Long.class))
+                .one();
+    }
+
+    @Override
+    public Mono<ConversationMessage> findLatestByConversationId(UUID conversationId) {
+        return databaseClient.sql("""
+                        SELECT id, conversation_id, role, sequence, content, content_hash,
+                               estimated_tokens, redaction_state, metadata::text AS metadata, created_at
+                        FROM conversation_message
+                        WHERE conversation_id = :conversationId
+                        ORDER BY sequence DESC, created_at DESC
+                        LIMIT 1
+                        """)
+                .bind("conversationId", conversationId)
+                .map((row, metadata) -> map(row))
+                .one();
+    }
+
+    private ConversationMessage map(io.r2dbc.spi.Row row) {
+        return new ConversationMessage(
+                PostgresBindingSupport.uuid(row, "id"),
+                PostgresBindingSupport.uuid(row, "conversation_id"),
+                MessageRole.valueOf(PostgresBindingSupport.string(row, "role")),
+                PostgresBindingSupport.integer(row, "sequence"),
+                PostgresBindingSupport.string(row, "content"),
+                PostgresBindingSupport.string(row, "content_hash"),
+                PostgresBindingSupport.integer(row, "estimated_tokens"),
+                RedactionState.valueOf(PostgresBindingSupport.string(row, "redaction_state")),
+                PostgresBindingSupport.stringMap(objectMapper, PostgresBindingSupport.string(row, "metadata")),
+                PostgresBindingSupport.instant(row, "created_at"));
     }
 }

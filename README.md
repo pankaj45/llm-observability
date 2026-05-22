@@ -2,7 +2,7 @@
 
 Production-grade AI observability and inference logging platform for multi-provider LLM applications.
 
-Current status: phase 3 inference logging pipeline MVP implementation. The repository now contains the WebFlux streaming inference API, Gemini provider adapter, PostgreSQL Flyway schema, Redis cancellation coordination, Kafka lifecycle publisher, ingestion-worker lifecycle consumer pipeline, ClickHouse lifecycle fact schema, contract validation, and focused service/controller/ingestion tests. Docker image validation and live container-backed integration testing are deferred until explicitly requested.
+Current status: phase 4 conversation continuity implementation. The repository now contains the WebFlux streaming inference API, Gemini provider adapter, PostgreSQL Flyway schema, Redis cancellation and active replay coordination, Kafka lifecycle publisher, ingestion-worker lifecycle consumer pipeline, ClickHouse lifecycle fact schema, conversation metadata/message/timeline APIs, contract validation, and focused service/controller/ingestion tests. Docker image validation and live container-backed integration testing are deferred until explicitly requested.
 
 ## Specification Baseline
 
@@ -21,6 +21,7 @@ Current status: phase 3 inference logging pipeline MVP implementation. The repos
 - [Phase 01 specification](docs/specs/phase-01-platform-bootstrap.md)
 - [Phase 02 specification](docs/specs/phase-02-inference-gateway-mvp.md)
 - [Phase 03 specification](docs/specs/phase-03-inference-logging-pipeline.md)
+- [Phase 04 specification](docs/specs/phase-04-conversation-continuity.md)
 - [ADR index](docs/adr/README.md)
 
 ## Target Stack
@@ -66,7 +67,7 @@ Every major technical decision must create or update an ADR in `docs/adr`.
 
 ## Repository Status
 
-This repository currently contains phase 3 inference gateway and ingestion-worker code and documentation. Analytics query APIs, conversation summaries and context-window optimization, authentication, and UI workflows remain future phases.
+This repository currently contains phase 4 inference gateway, conversation continuity, and ingestion-worker code and documentation. Analytics query APIs, conversation summaries and context-window optimization, authentication, and UI workflows remain future phases.
 
 ## Local Development
 

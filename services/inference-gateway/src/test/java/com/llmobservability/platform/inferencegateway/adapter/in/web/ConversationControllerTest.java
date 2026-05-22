@@ -1,8 +1,12 @@
 package com.llmobservability.platform.inferencegateway.adapter.in.web;
 
 import com.llmobservability.platform.inferencegateway.application.port.in.ContinueConversationCommand;
+import com.llmobservability.platform.inferencegateway.application.port.in.ConversationMessageResult;
+import com.llmobservability.platform.inferencegateway.application.port.in.ListConversationMessagesQuery;
 import com.llmobservability.platform.inferencegateway.application.port.in.InferenceGatewayUseCase;
+import com.llmobservability.platform.inferencegateway.application.port.in.PagedResult;
 import com.llmobservability.platform.inferencegateway.domain.model.MessageRole;
+import com.llmobservability.platform.inferencegateway.domain.model.RedactionState;
 import com.llmobservability.platform.inferencegateway.domain.model.StreamEvent;
 import com.llmobservability.platform.inferencegateway.domain.model.StreamEventType;
 import org.junit.jupiter.api.Test;
@@ -14,8 +18,10 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -78,5 +84,44 @@ class ConversationControllerTest {
                     assertThat(message.role()).isEqualTo(MessageRole.USER);
                     assertThat(message.content()).isEqualTo("continue please");
                 });
+    }
+
+    @Test
+    void listMessagesDelegatesWithTenantProjectScope() {
+        UUID conversationId = UUID.randomUUID();
+        UUID messageId = UUID.randomUUID();
+        when(useCase.listConversationMessages(any())).thenReturn(Mono.just(new PagedResult<>(List.of(new ConversationMessageResult(
+                messageId,
+                conversationId,
+                MessageRole.USER,
+                0,
+                "hello",
+                "hash",
+                2,
+                RedactionState.NONE,
+                Map.of("source", "request"),
+                Instant.parse("2026-05-23T00:00:00Z"),
+                "cursor-1")), null)));
+
+        webTestClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/v1/conversations/{conversationId}/messages")
+                        .queryParam("tenantId", "tenant-a")
+                        .queryParam("projectId", "project-a")
+                        .queryParam("limit", "10")
+                        .build(conversationId))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.items[0].messageId").isEqualTo(messageId.toString())
+                .jsonPath("$.items[0].content").isEqualTo("hello")
+                .jsonPath("$.items[0].cursor").isEqualTo("cursor-1");
+
+        ArgumentCaptor<ListConversationMessagesQuery> query = ArgumentCaptor.forClass(ListConversationMessagesQuery.class);
+        verify(useCase).listConversationMessages(query.capture());
+        assertThat(query.getValue().conversationId()).isEqualTo(conversationId);
+        assertThat(query.getValue().tenantId()).isEqualTo("tenant-a");
+        assertThat(query.getValue().projectId()).isEqualTo("project-a");
+        assertThat(query.getValue().limit()).isEqualTo(10);
     }
 }

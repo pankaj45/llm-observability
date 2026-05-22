@@ -45,9 +45,11 @@ libs/contracts/openapi/
 | Conversation message stream | POST | `/v1/conversations/{conversationId}/messages/stream` | Continue an existing conversation |
 | Cancel inference | DELETE | `/v1/inference/{requestId}/stream` | Request cancellation for an active stream |
 | Inference status | GET | `/v1/inference/{requestId}` | Read request status and summary |
-| Conversation create | POST | `/v1/conversations` | Create a conversation |
-| Conversation get | GET | `/v1/conversations/{conversationId}` | Read conversation metadata and state |
-| Conversation events | GET | `/v1/conversations/{conversationId}/events` | Replay or resume conversation events |
+| Conversation list | GET | `/v1/conversations` | List conversation metadata |
+| Conversation get | GET | `/v1/conversations/{conversationId}` | Read conversation metadata |
+| Conversation messages | GET | `/v1/conversations/{conversationId}/messages` | Read persisted conversation messages |
+| Conversation events | GET | `/v1/conversations/{conversationId}/events` | Read timeline history or replay active stream events |
+| Cancel conversation stream | DELETE | `/v1/conversations/{conversationId}/stream` | Cancel active stream work for a conversation |
 | Analytics summary | GET | `/v1/analytics/inference/summary` | Dashboard summary metrics |
 | Analytics requests | GET | `/v1/analytics/inference/requests` | Search inference requests |
 | Analytics request detail | GET | `/v1/analytics/inference/requests/{requestId}` | Inspect one request trace |
@@ -119,6 +121,32 @@ Required status behavior:
 - Status response includes lifecycle state, provider, model, timestamps, usage summary, cancellation summary, and error summary.
 - Status response excludes raw prompt and completion content by default.
 - Raw conversation content is available only through authorized conversation/message APIs with redaction policy.
+
+## Phase 4 Conversation Contract Requirements
+
+Phase 4 expands `libs/contracts/openapi/conversation.v1.yaml` for conversation continuity.
+
+Required endpoints:
+
+| API | Method | Path | Required in Phase 4 |
+| --- | --- | --- | --- |
+| Conversation list | GET | `/v1/conversations` | Yes |
+| Conversation get | GET | `/v1/conversations/{conversationId}` | Yes |
+| Conversation messages | GET | `/v1/conversations/{conversationId}/messages` | Yes |
+| Conversation events | GET | `/v1/conversations/{conversationId}/events` | Yes |
+| Cancel conversation stream | DELETE | `/v1/conversations/{conversationId}/stream` | Yes |
+
+Required continuity behavior:
+
+- Conversation list/get returns metadata only.
+- Conversation messages returns raw content only after tenant/project scoping.
+- Conversation events supports `mode=history` JSON pages and `mode=stream` active replay.
+- Public history cursors are opaque server-owned strings.
+- Pagination defaults to 50 items and is capped at 200 items.
+- Durable timeline history is derived from canonical PostgreSQL records.
+- Redis active stream replay is short-lived and best-effort.
+- Concurrent active continuation streams for the same conversation are rejected.
+- Phase 4 does not publish new `conversation.*` Kafka events.
 
 ## Validation Requirements
 

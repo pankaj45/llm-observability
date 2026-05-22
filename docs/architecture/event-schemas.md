@@ -15,11 +15,11 @@ libs/contracts/events/
 | Topic | Purpose | Example Events |
 | --- | --- | --- |
 | `inference.lifecycle.v1` | Request lifecycle events | requested, completed, cancelled, failed |
-| `inference.stream.v1` | Optional token/chunk stream events | token_streamed, usage_delta |
-| `conversation.lifecycle.v1` | Conversation lifecycle events | created, resumed, archived |
+| `inference.stream.v1` | Deferred optional token/chunk stream events | token_streamed, usage_delta |
+| `conversation.lifecycle.v1` | Deferred conversation lifecycle events | created, resumed, archived |
 | `observability.deadletter.v1` | Failed processing records | consumer failure envelopes |
 
-Token-level stream events may be sampled or disabled by policy to control cost and privacy risk.
+Token-level stream events and conversation lifecycle Kafka events are deferred through Phase 4. Active stream replay uses short-lived Redis state, while durable conversation timelines are derived from PostgreSQL canonical records.
 
 ## Common Envelope
 
