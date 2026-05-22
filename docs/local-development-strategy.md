@@ -74,6 +74,8 @@ make down               # stop local dependencies
 - PostgreSQL migrations should be versioned and repeatable in local and CI environments.
 - ClickHouse migrations should be explicit and reviewed with expected query patterns.
 - Phase 2 adds the inference gateway Flyway migration for provider/model, conversation, message, request, usage, error, and cancellation tables.
+- Phase 3 adds ingestion-worker Flyway migration state in a separate `ingestion_worker_flyway_schema_history` table to avoid checksum collisions with inference-gateway migrations sharing the same local PostgreSQL database.
+- Phase 3 ClickHouse schema is documented in `infra/migrations/clickhouse/V1__phase_03_inference_lifecycle_fact.sql`; apply it before enabling ClickHouse ingestion locally.
 - Seed data should be deterministic and safe to reset.
 - Local reset commands must never target production-like connection strings.
 
@@ -84,6 +86,13 @@ make down               # stop local dependencies
 - `POST /v1/inference/stream` rejects request bodies with `conversationId`; the gateway always creates the conversation id and title.
 - Kafka lifecycle publishing is enabled in Compose through `INFERENCE_KAFKA_ENABLED=true`.
 - Docker image verification is intentionally deferred to the later image-testing pass.
+
+## Phase 3 Ingestion Worker
+
+- Docker Compose enables Kafka lifecycle consumption with `INGESTION_KAFKA_ENABLED=true`.
+- Docker Compose enables ClickHouse lifecycle fact writes with `INGESTION_CLICKHOUSE_ENABLED=true`.
+- The worker consumes `inference.lifecycle.v1`, records dedupe/processing state in PostgreSQL, and writes analytics facts to ClickHouse.
+- Container-backed Kafka/PostgreSQL/ClickHouse integration tests are deferred until explicitly requested.
 
 ## Developer Observability
 

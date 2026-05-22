@@ -171,6 +171,10 @@ Status as of 2026-05-22: implemented in `services/inference-gateway` with module
 
 ## Phase 3: Inference Logging Pipeline
 
+Detailed phase spec: [Phase 03: Inference Logging Pipeline](specs/phase-03-inference-logging-pipeline.md).
+
+Status as of 2026-05-23: implemented as an ingestion-worker MVP for inference lifecycle events, with live Kafka/PostgreSQL/ClickHouse container verification deferred until explicitly requested.
+
 ### Goals
 
 - Persist request metadata, conversation state, and high-volume telemetry through a durable pipeline.

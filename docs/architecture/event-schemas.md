@@ -100,6 +100,20 @@ Phase 2 should not publish `inference.token_streamed` by default unless token-le
 
 Phase 2 lifecycle events must not include raw prompt or completion content. They may include message counts, token counts, content hashes, provider/model identifiers, and timing metadata.
 
+## Phase 3 Ingestion Pipeline
+
+Phase 3 consumes `inference.lifecycle.v1` events in `services/ingestion-worker`.
+
+Required ingestion behavior:
+
+- Deduplicate by `idempotencyKey` when present, falling back to `eventId`.
+- Persist processing state in PostgreSQL `ingestion_processed_event`.
+- Write normalized lifecycle facts to ClickHouse `inference_lifecycle_fact`.
+- Mark failed analytics writes as `FAILED` in the processing ledger.
+- Skip duplicate events before ClickHouse writes.
+
+Phase 3 still defers `inference.token_streamed` consumption. Lifecycle facts must not contain raw prompt or completion content.
+
 Required lifecycle event fields:
 
 - `requestId`

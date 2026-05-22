@@ -2,7 +2,7 @@
 
 Production-grade AI observability and inference logging platform for multi-provider LLM applications.
 
-Current status: phase 2 inference gateway MVP implementation. The repository now contains the WebFlux streaming inference API, Gemini provider adapter, PostgreSQL Flyway schema, Redis cancellation coordination, Kafka lifecycle publisher, contract validation, and focused service/controller tests. Docker image validation is deferred until the later image-testing pass.
+Current status: phase 3 inference logging pipeline MVP implementation. The repository now contains the WebFlux streaming inference API, Gemini provider adapter, PostgreSQL Flyway schema, Redis cancellation coordination, Kafka lifecycle publisher, ingestion-worker lifecycle consumer pipeline, ClickHouse lifecycle fact schema, contract validation, and focused service/controller/ingestion tests. Docker image validation and live container-backed integration testing are deferred until explicitly requested.
 
 ## Specification Baseline
 
@@ -20,6 +20,7 @@ Current status: phase 2 inference gateway MVP implementation. The repository now
 - [Observability strategy](docs/observability-strategy.md)
 - [Phase 01 specification](docs/specs/phase-01-platform-bootstrap.md)
 - [Phase 02 specification](docs/specs/phase-02-inference-gateway-mvp.md)
+- [Phase 03 specification](docs/specs/phase-03-inference-logging-pipeline.md)
 - [ADR index](docs/adr/README.md)
 
 ## Target Stack
@@ -65,7 +66,7 @@ Every major technical decision must create or update an ADR in `docs/adr`.
 
 ## Repository Status
 
-This repository currently contains phase 2 inference gateway code and documentation. Ingestion, analytics, conversation summaries and context-window optimization, authentication, and UI workflows remain future phases.
+This repository currently contains phase 3 inference gateway and ingestion-worker code and documentation. Analytics query APIs, conversation summaries and context-window optimization, authentication, and UI workflows remain future phases.
 
 ## Local Development
 
@@ -89,3 +90,9 @@ Phase 2 local notes:
 - `POST /v1/inference/stream` always creates the conversation id on the backend; request bodies containing `conversationId` are rejected.
 - `POST /v1/conversations/{conversationId}/messages/stream` continues an existing conversation; clients send only the new turn.
 - Run `mvn -pl services/inference-gateway test` for the inference gateway test suite.
+
+Phase 3 local notes:
+
+- `services/ingestion-worker` consumes `inference.lifecycle.v1` when `INGESTION_KAFKA_ENABLED=true`.
+- ClickHouse lifecycle fact writes are enabled with `INGESTION_CLICKHOUSE_ENABLED=true` and require `llm_observability.inference_lifecycle_fact` from `infra/migrations/clickhouse`.
+- Run `mvn -pl services/ingestion-worker test` for the ingestion-worker test suite.

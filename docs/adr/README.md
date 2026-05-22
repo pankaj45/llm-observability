@@ -16,6 +16,7 @@ ADRs capture major decisions that affect architecture, operations, data contract
 - [ADR-0010: R2DBC Repositories with Flyway Migrations](ADR-0010-r2dbc-repositories-with-flyway-migrations.md)
 - [ADR-0011: Inference Gateway Request Lifecycle Ownership](ADR-0011-inference-gateway-request-lifecycle-ownership.md)
 - [ADR-0012: Phase 2 Gemini, Conversation Content, and Redis Decisions](ADR-0012-phase-02-gemini-conversation-content-and-redis.md)
+- [ADR-0013: Phase 3 Ingestion Pipeline Ownership](ADR-0013-phase-03-ingestion-pipeline-ownership.md)
 
 ## Required ADR Format
 

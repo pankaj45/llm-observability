@@ -7,6 +7,20 @@ spring:
     password: ${SPRING_R2DBC_PASSWORD:llm_observability}
   flyway:
     enabled: ${SPRING_FLYWAY_ENABLED:false}
+    url: ${SPRING_FLYWAY_URL:jdbc:postgresql://localhost:5432/llm_observability}
+    user: ${SPRING_FLYWAY_USER:llm_observability}
+    password: ${SPRING_FLYWAY_PASSWORD:llm_observability}
+    table: ${SPRING_FLYWAY_TABLE:ingestion_worker_flyway_schema_history}
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: ${INGESTION_KAFKA_GROUP_ID:ingestion-worker}
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+    listener:
+      ack-mode: manual
 
 server:
   port: ${SERVER_PORT:8082}
@@ -34,7 +48,21 @@ management:
 
 info:
   service: ingestion-worker
-  phase: platform-bootstrap
+  phase: inference-logging-pipeline
+
+llm-observability:
+  ingestion:
+    kafka:
+      enabled: ${INGESTION_KAFKA_ENABLED:false}
+      lifecycle-topic: ${INFERENCE_LIFECYCLE_TOPIC:inference.lifecycle.v1}
+      group-id: ${INGESTION_KAFKA_GROUP_ID:ingestion-worker}
+    clickhouse:
+      enabled: ${INGESTION_CLICKHOUSE_ENABLED:false}
+      base-url: ${CLICKHOUSE_HTTP_URL:http://localhost:8123}
+      database: ${CLICKHOUSE_DATABASE:llm_observability}
+      lifecycle-table: ${CLICKHOUSE_INFERENCE_LIFECYCLE_TABLE:inference_lifecycle_fact}
+      username: ${CLICKHOUSE_USERNAME:default}
+      password: ${CLICKHOUSE_PASSWORD:}
 
 logging:
   pattern:

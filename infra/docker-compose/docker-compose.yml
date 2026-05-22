@@ -138,8 +138,21 @@ services:
       SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/llm_observability
       SPRING_R2DBC_USERNAME: llm_observability
       SPRING_R2DBC_PASSWORD: llm_observability
+      SPRING_FLYWAY_ENABLED: "true"
+      SPRING_FLYWAY_URL: jdbc:postgresql://postgres:5432/llm_observability
+      SPRING_FLYWAY_USER: llm_observability
+      SPRING_FLYWAY_PASSWORD: llm_observability
+      SPRING_FLYWAY_TABLE: ingestion_worker_flyway_schema_history
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      INGESTION_KAFKA_ENABLED: "true"
+      INGESTION_CLICKHOUSE_ENABLED: "true"
+      CLICKHOUSE_HTTP_URL: http://clickhouse:8123
+      CLICKHOUSE_DATABASE: llm_observability
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
     ports:
       - "8082:8082"
     depends_on:
+      - postgres
+      - kafka
+      - clickhouse
       - otel-collector
