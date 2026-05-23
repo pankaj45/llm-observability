@@ -21,6 +21,8 @@ import {
   IconPlus,
 } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import styles from "./page.module.css";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -187,26 +189,24 @@ export default function ChatPage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = (await res.json()) as ModelCatalogResponse;
       
-      const options = body.providers.flatMap((p) =>
-        p.models.map((m) => ({
+      const options = body.providers.map((p) => ({
+        group: p.name,
+        items: p.models.map((m) => ({
           value: m.id,
           label: m.name,
-          group: p.name,
         }))
-      );
-      setModelOptions(options);
+      }));
+      
+      setModelOptions(options as any);
       
       // Default to the first available model if none selected
       if (options.length > 0 && !model) {
-        // Try to pick a flash model as default, else just the first one
-        const defaultOpt = options.find(o => o.value.includes('flash')) ?? options[0];
-        setModel(defaultOpt.value);
+        const allItems = options.flatMap(o => o.items);
+        const defaultOpt = allItems.find(o => o.value.includes('flash')) ?? allItems[0];
+        if (defaultOpt) setModel(defaultOpt.value);
       }
     } catch (err) {
       console.error("Failed to load model catalog:", err);
-      // Fallback
-      setModelOptions([{ value: "gemini-1.5-flash", label: "Gemini 1.5 Flash (Fallback)" }]);
-      if (!model) setModel("gemini-1.5-flash");
     }
   }
 
@@ -715,7 +715,11 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
   return (
     <div className={`${styles.msgRow} ${isUser ? styles.msgRowUser : styles.msgRowAssistant}`}>
       <div className={`${styles.bubble} ${bubbleClass}`}>
-        {msg.content}
+        <div className={styles.markdownContent}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {msg.content}
+          </ReactMarkdown>
+        </div>
         {isStreaming && <span className={styles.streamingCursor} aria-hidden="true" />}
         {(isCancelled || isFailed) && (
           <div className={styles.bubgeStatusRow}>

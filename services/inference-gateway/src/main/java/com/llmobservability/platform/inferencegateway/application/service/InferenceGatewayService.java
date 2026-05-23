@@ -471,7 +471,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                                     }
                                     return Mono.just(chunk);
                                 }))
-                        .flatMap(chunk -> {
+                        .concatMap(chunk -> {
                             if (chunk.inputTokens() != null) {
                                 inputTokens.set(chunk.inputTokens());
                             }
