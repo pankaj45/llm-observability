@@ -4,6 +4,7 @@ import com.llmobservability.platform.analyticsquery.application.service.Applicat
 import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -41,6 +42,12 @@ class ApiExceptionHandler {
     ResponseEntity<ErrorEnvelope> illegalArgument(IllegalArgumentException exception) {
         return ResponseEntity.badRequest()
                 .body(ErrorEnvelope.of("VALIDATION_INVALID_REQUEST", exception.getMessage(), List.of()));
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    ResponseEntity<ErrorEnvelope> accessDenied(AccessDeniedException exception) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ErrorEnvelope.of("AUTHORIZATION_DENIED", "Authorization denied", List.of()));
     }
 
     @ExceptionHandler(Throwable.class)

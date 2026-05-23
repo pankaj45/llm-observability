@@ -45,9 +45,11 @@ import java.util.UUID;
 @RequestMapping("/v1/conversations")
 public class ConversationController {
     private final InferenceGatewayUseCase useCase;
+    private final TenantProjectAuthorizer authorizer;
 
-    ConversationController(InferenceGatewayUseCase useCase) {
+    ConversationController(InferenceGatewayUseCase useCase, TenantProjectAuthorizer authorizer) {
         this.useCase = useCase;
+        this.authorizer = authorizer;
     }
 
     @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
@@ -61,7 +63,8 @@ public class ConversationController {
         ConversationStatus conversationStatus = status == null || status.isBlank()
                 ? null
                 : ConversationStatus.valueOf(status.toUpperCase(Locale.ROOT));
-        return useCase.listConversations(new ListConversationsQuery(tenantId, projectId, conversationStatus, cursor, limit))
+        return authorizer.requireTenantProject(tenantId, projectId, "conversation:read")
+                .then(useCase.listConversations(new ListConversationsQuery(tenantId, projectId, conversationStatus, cursor, limit)))
                 .map(page -> new PagedResult<>(page.items().stream().map(ConversationMetadataResponse::from).toList(), page.nextCursor()));
     }
 
@@ -71,7 +74,8 @@ public class ConversationController {
             @RequestParam @NotBlank String tenantId,
             @RequestParam @NotBlank String projectId
     ) {
-        return useCase.getConversation(new GetConversationQuery(conversationId, tenantId, projectId))
+        return authorizer.requireTenantProject(tenantId, projectId, "conversation:read")
+                .then(useCase.getConversation(new GetConversationQuery(conversationId, tenantId, projectId)))
                 .map(ConversationMetadataResponse::from);
     }
 
@@ -83,7 +87,8 @@ public class ConversationController {
             @RequestParam(required = false) String after,
             @RequestParam(defaultValue = "50") int limit
     ) {
-        return useCase.listConversationMessages(new ListConversationMessagesQuery(conversationId, tenantId, projectId, after, limit))
+        return authorizer.requireTenantProject(tenantId, projectId, "conversation:read")
+                .then(useCase.listConversationMessages(new ListConversationMessagesQuery(conversationId, tenantId, projectId, after, limit)))
                 .map(page -> new PagedResult<>(page.items().stream().map(ConversationMessageResponse::from).toList(), page.nextCursor()));
     }
 
@@ -94,7 +99,8 @@ public class ConversationController {
             @RequestParam @NotBlank String projectId,
             @RequestParam(required = false) String after
     ) {
-        return useCase.streamConversationEvents(new StreamConversationEventsQuery(conversationId, tenantId, projectId, after))
+        return authorizer.requireTenantProject(tenantId, projectId, "conversation:read")
+                .thenMany(useCase.streamConversationEvents(new StreamConversationEventsQuery(conversationId, tenantId, projectId, after)))
                 .map(this::toServerSentEvent);
     }
 
@@ -106,7 +112,8 @@ public class ConversationController {
             @RequestParam(required = false) String after,
             @RequestParam(defaultValue = "50") int limit
     ) {
-        return useCase.listConversationEvents(new ListConversationEventsQuery(conversationId, tenantId, projectId, after, limit))
+        return authorizer.requireTenantProject(tenantId, projectId, "conversation:read")
+                .then(useCase.listConversationEvents(new ListConversationEventsQuery(conversationId, tenantId, projectId, after, limit)))
                 .map(page -> new PagedResult<>(page.items().stream().map(ConversationTimelineEventResponse::from).toList(), page.nextCursor()));
     }
 
@@ -118,7 +125,8 @@ public class ConversationController {
             @RequestHeader(name = "X-Requested-By", defaultValue = "unknown") String requestedBy,
             @RequestHeader(name = "X-Cancel-Reason", defaultValue = "conversation stream cancelled") String reason
     ) {
-        return useCase.cancelConversationStream(new CancelConversationStreamCommand(conversationId, tenantId, projectId, requestedBy, reason))
+        return authorizer.requireTenantProject(tenantId, projectId, "conversation:write")
+                .then(useCase.cancelConversationStream(new CancelConversationStreamCommand(conversationId, tenantId, projectId, requestedBy, reason)))
                 .map(InferenceController.CancelInferenceResponse::from);
     }
 
@@ -144,7 +152,8 @@ public class ConversationController {
                 request.idempotencyKey(),
                 traceparent);
 
-        return useCase.continueConversation(command)
+        return authorizer.requireTenantProject(request.tenantId(), request.projectId(), "conversation:write")
+                .thenMany(useCase.continueConversation(command))
                 .map(this::toServerSentEvent);
     }
 

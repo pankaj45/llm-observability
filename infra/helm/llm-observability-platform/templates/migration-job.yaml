@@ -1,0 +1,35 @@
+{{- if .Values.migrations.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: inference-gateway-migrations
+  labels:
+    {{- include "llm-observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrations
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        {{- include "llm-observability.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrations
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: inference-gateway-migrations
+          image: "{{ .Values.migrations.inferenceGateway.image.repository }}:{{ .Values.migrations.inferenceGateway.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "llm-observability.name" . }}-config
+            - secretRef:
+                name: {{ include "llm-observability.secretName" . }}
+                optional: true
+          env:
+            - name: SPRING_FLYWAY_ENABLED
+              value: "true"
+            - name: SPRING_MAIN_WEB_APPLICATION_TYPE
+              value: "none"
+{{- end }}

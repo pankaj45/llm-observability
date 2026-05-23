@@ -34,9 +34,11 @@ import java.util.UUID;
 @RequestMapping("/v1/inference")
 public class InferenceController {
     private final InferenceGatewayUseCase useCase;
+    private final TenantProjectAuthorizer authorizer;
 
-    InferenceController(InferenceGatewayUseCase useCase) {
+    InferenceController(InferenceGatewayUseCase useCase, TenantProjectAuthorizer authorizer) {
         this.useCase = useCase;
+        this.authorizer = authorizer;
     }
 
     @PostMapping(path = "/stream", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -59,7 +61,8 @@ public class InferenceController {
                 request.idempotencyKey(),
                 traceparent);
 
-        return useCase.stream(command)
+        return authorizer.requireTenantProject(request.tenantId(), request.projectId(), "inference:write")
+                .thenMany(useCase.stream(command))
                 .map(this::toServerSentEvent);
     }
 
@@ -69,10 +72,11 @@ public class InferenceController {
             @RequestHeader(name = "X-Requested-By", required = false) String requestedBy,
             @RequestHeader(name = "X-Cancel-Reason", required = false) String reason
     ) {
-        return useCase.cancel(new CancelInferenceCommand(
+        return authorizer.requireScope("inference:write")
+                .then(useCase.cancel(new CancelInferenceCommand(
                         requestId,
                         requestedBy == null || requestedBy.isBlank() ? "api" : requestedBy,
-                        reason == null || reason.isBlank() ? "client_requested" : reason))
+                        reason == null || reason.isBlank() ? "client_requested" : reason)))
                 .map(result -> new CancelInferenceResponse(
                         result.requestId(),
                         result.conversationId(),
@@ -83,7 +87,8 @@ public class InferenceController {
 
     @GetMapping(path = "/{requestId}", produces = MediaType.APPLICATION_JSON_VALUE)
     Mono<InferenceStatusResponse> status(@PathVariable UUID requestId) {
-        return useCase.status(new GetInferenceStatusQuery(requestId))
+        return authorizer.requireScope("inference:read")
+                .then(useCase.status(new GetInferenceStatusQuery(requestId)))
                 .map(InferenceStatusResponse::from);
     }
 

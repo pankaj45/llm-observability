@@ -1,0 +1,141 @@
+global:
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+  environment: staging
+  otlpEndpoint: http://otel-collector:4318/v1/traces
+  security:
+    enabled: true
+    issuerUri: http://mock-issuer:8090/realms/llm-observability
+    audience: llm-observability-platform
+
+secrets:
+  create: false
+  existingSecret: llm-observability-platform-secrets
+  data:
+    geminiApiKey: ""
+    postgresUsername: ""
+    postgresPassword: ""
+    clickhouseUsername: ""
+    clickhousePassword: ""
+    kafkaUsername: ""
+    kafkaPassword: ""
+    redisPassword: ""
+
+config:
+  postgresR2dbcUrl: r2dbc:postgresql://postgres:5432/llm_observability
+  postgresJdbcUrl: jdbc:postgresql://postgres:5432/llm_observability
+  redisHost: redis
+  redisPort: "6379"
+  kafkaBootstrapServers: kafka:9092
+  clickhouseHttpUrl: http://clickhouse:8123
+  clickhouseDatabase: llm_observability
+  analyticsApiBase: http://analytics-query:8081
+  protectedContentRetentionDays: "30"
+  analyticsFactRetentionDays: "90"
+
+services:
+  web:
+    enabled: true
+    replicaCount: 2
+    image:
+      repository: llm-observability/web
+      tag: "0.1.0"
+    port: 3000
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 6
+      targetCPUUtilizationPercentage: 70
+
+  inferenceGateway:
+    enabled: true
+    replicaCount: 2
+    image:
+      repository: llm-observability/inference-gateway
+      tag: "0.1.0"
+    port: 8080
+    env:
+      INFERENCE_KAFKA_ENABLED: "true"
+      SPRING_FLYWAY_ENABLED: "false"
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 10
+      targetCPUUtilizationPercentage: 65
+
+  analyticsQuery:
+    enabled: true
+    replicaCount: 2
+    image:
+      repository: llm-observability/analytics-query
+      tag: "0.1.0"
+    port: 8081
+    env:
+      ANALYTICS_CLICKHOUSE_ENABLED: "true"
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 8
+      targetCPUUtilizationPercentage: 70
+
+  ingestionWorker:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: llm-observability/ingestion-worker
+      tag: "0.1.0"
+    port: 8082
+    env:
+      INGESTION_KAFKA_ENABLED: "true"
+      INGESTION_CLICKHOUSE_ENABLED: "true"
+      SPRING_FLYWAY_ENABLED: "false"
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    autoscaling:
+      enabled: false
+
+migrations:
+  enabled: true
+  inferenceGateway:
+    image:
+      repository: llm-observability/inference-gateway
+      tag: "0.1.0"
+  ingestionWorker:
+    image:
+      repository: llm-observability/ingestion-worker
+      tag: "0.1.0"
+
+networkPolicy:
+  enabled: true
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

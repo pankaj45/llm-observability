@@ -7,6 +7,7 @@ import {
   Group,
   Loader,
   Paper,
+  PasswordInput,
   ScrollArea,
   Select,
   SimpleGrid,
@@ -22,6 +23,7 @@ import {
   IconChartBar,
   IconClock,
   IconDatabaseSearch,
+  IconKey,
   IconRefresh,
   IconSearch,
   IconServerBolt
@@ -175,6 +177,7 @@ export default function HomePage() {
   const [requests, setRequests] = useState<RequestRow[]>([]);
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [detail, setDetail] = useState<RequestDetail | null>(null);
+  const [authToken, setAuthToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -192,13 +195,30 @@ export default function HomePage() {
     return query;
   }, [tenantId, projectId, from, to, provider, model, status]);
 
+  useEffect(() => {
+    setAuthToken(window.localStorage.getItem("llm-observability.authToken") ?? "");
+  }, []);
+
+  function requestHeaders() {
+    return authToken.trim() ? { Authorization: `Bearer ${authToken.trim()}` } : undefined;
+  }
+
+  function updateAuthToken(value: string) {
+    setAuthToken(value);
+    if (value.trim()) {
+      window.localStorage.setItem("llm-observability.authToken", value);
+    } else {
+      window.localStorage.removeItem("llm-observability.authToken");
+    }
+  }
+
   async function loadDashboard() {
     setLoading(true);
     setError(null);
     try {
       const [summaryResponse, requestsResponse] = await Promise.all([
-        fetch(`${apiBase}/v1/analytics/inference/summary?${params.toString()}`),
-        fetch(`${apiBase}/v1/analytics/inference/requests?${params.toString()}&limit=50`)
+        fetch(`${apiBase}/v1/analytics/inference/summary?${params.toString()}`, { headers: requestHeaders() }),
+        fetch(`${apiBase}/v1/analytics/inference/requests?${params.toString()}&limit=50`, { headers: requestHeaders() })
       ]);
       if (!summaryResponse.ok || !requestsResponse.ok) {
         throw new Error("Analytics query failed");
@@ -222,7 +242,7 @@ export default function HomePage() {
   async function loadDetail(requestId: string) {
     setDetailLoading(true);
     try {
-      const response = await fetch(`${apiBase}/v1/analytics/inference/requests/${requestId}?${params.toString()}`);
+      const response = await fetch(`${apiBase}/v1/analytics/inference/requests/${requestId}?${params.toString()}`, { headers: requestHeaders() });
       if (!response.ok) {
         throw new Error("Request detail failed");
       }
@@ -264,7 +284,7 @@ export default function HomePage() {
         </Group>
 
         <Paper withBorder radius="sm" p="md">
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 7 }} spacing="sm">
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="sm">
             <TextInput label="Tenant" value={tenantId} onChange={(event) => setTenantId(event.currentTarget.value)} />
             <TextInput label="Project" value={projectId} onChange={(event) => setProjectId(event.currentTarget.value)} />
             <TextInput label="From" type="datetime-local" value={from} onChange={(event) => setFrom(event.currentTarget.value)} />
@@ -277,6 +297,12 @@ export default function HomePage() {
               value={status}
               onChange={setStatus}
               data={["ACCEPTED", "STREAMING", "COMPLETED", "CANCELLED", "FAILED"]}
+            />
+            <PasswordInput
+              label="Bearer token"
+              leftSection={<IconKey size={16} />}
+              value={authToken}
+              onChange={(event) => updateAuthToken(event.currentTarget.value)}
             />
           </SimpleGrid>
           <Group justify="flex-end" mt="md">

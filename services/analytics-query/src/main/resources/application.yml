@@ -45,6 +45,10 @@ llm-observability:
       password: ${CLICKHOUSE_PASSWORD:}
       database: ${CLICKHOUSE_DATABASE:llm_observability}
       lifecycle-table: ${CLICKHOUSE_LIFECYCLE_TABLE:inference_lifecycle_fact}
+  security:
+    enabled: ${SECURITY_ENABLED:false}
+    issuer-uri: ${OIDC_ISSUER_URI:http://localhost:8090/realms/llm-observability}
+    audience: ${OIDC_AUDIENCE:llm-observability-platform}
 
 logging:
   pattern:

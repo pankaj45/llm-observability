@@ -279,6 +279,10 @@ Status as of 2026-05-23: approved for implementation with ClickHouse-backed anal
 
 ## Phase 6: Production Hardening
 
+Detailed phase spec: [Phase 06: Production Hardening](specs/phase-06-production-hardening.md).
+
+Status as of 2026-05-23: approved for implementation with OIDC/JWT authentication, cloud-neutral Helm/Kubernetes deployment, Kubernetes Secrets with External Secrets compatibility, Docker image validation, live container-backed dependency tests, and baseline retention/redaction/audit controls.
+
 ### Goals
 
 - Make the platform deployable, operable, and supportable in production environments.

@@ -113,6 +113,13 @@ Local development must make these easy to inspect:
 - Prometheus metrics for request latency, token throughput, provider errors, and consumer lag.
 - Structured logs correlated by trace id and request id.
 
+## Phase 6 Local Security
+
+- Local development uses a mock OIDC issuer or signed development tokens.
+- Business API examples should include bearer tokens after Phase 6 security is enabled.
+- Local tokens must use non-production issuer, audience, and signing keys.
+- Local secret values must never resemble production credentials.
+
 ## Acceptance Criteria
 
 - A new developer can bootstrap dependencies and run all tests from documented commands.

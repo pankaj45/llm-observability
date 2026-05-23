@@ -5,6 +5,8 @@ info:
   description: Contract inventory for streaming inference APIs. Phase 2 requires backend-owned conversation creation.
 servers:
   - url: http://localhost:8080
+security:
+  - bearerAuth: []
 paths:
   /v1/inference/stream:
     post:
@@ -126,6 +128,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     InferenceStreamRequest:
       type: object

@@ -100,10 +100,11 @@ These are proposed starting points and must be validated with product and load-t
 | Journey | Candidate SLO |
 | --- | --- |
 | Inference API availability | 99.9% successful non-provider-error requests |
-| SSE first-token latency | p95 under provider-adjusted target |
+| SSE first event latency | p95 under 1000 ms excluding provider latency where distinguishable |
 | Cancellation acknowledgement | p95 under 500 ms once gateway receives cancellation |
 | Event ingestion lag | p95 under 30 seconds from Kafka publish to ClickHouse visibility |
 | Dashboard query latency | p95 under 2 seconds for default time windows |
+| Authentication decision latency | p95 under 100 ms for cached JWKS validation |
 
 ## Dashboards
 
@@ -121,12 +122,19 @@ Baseline dashboards:
 Alerting should prioritize symptoms over raw causes:
 
 - API availability burn rate.
+- API p95 latency burn rate.
 - SSE stream failure or cancellation anomaly.
+- Cancellation acknowledgement latency.
 - Kafka consumer lag sustained above threshold.
 - ClickHouse ingestion failures.
 - PostgreSQL connection pool exhaustion.
+- Redis operation failure rate.
 - Provider timeout spike.
+- OIDC JWKS refresh failures.
+- Authorization-denial anomaly.
 - OTel collector or metrics scrape failure.
+
+Phase 6 requires every production alert to link to a runbook with impact, triage, mitigation, rollback, and escalation notes.
 
 ## Acceptance Criteria
 
@@ -141,4 +149,3 @@ Alerting should prioritize symptoms over raw causes:
 - High-cardinality metrics can make Prometheus expensive or unstable.
 - Over-instrumentation can add latency to streaming paths.
 - Raw prompt/completion leakage is a privacy risk if logging controls are weak.
-

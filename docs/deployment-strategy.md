@@ -22,6 +22,18 @@
 - Managed service choices for Kafka, PostgreSQL, ClickHouse, Redis, and Grafana are not finalized.
 - Multi-region active-active deployment is not in the initial production scope.
 
+## Phase 6 Deployment Decisions
+
+- Production deployment targets generic Kubernetes through Helm.
+- Docker Compose remains a local development topology only.
+- Helm charts own application workloads, services, probes, resource controls, autoscaling, disruption budgets, secret references, telemetry settings, network policies, and migration jobs.
+- Kubernetes Secrets are the baseline secret reference mechanism.
+- Chart values must remain compatible with External Secrets, Vault, or cloud secret managers.
+- Cloud-specific ingress, certificate management, DNS, and managed dependency provisioning are environment responsibilities, not Phase 6 application chart scope.
+- Schema migrations run as controlled jobs before application rollout.
+- Docker image validation is a Phase 6 release gate.
+- Live container-backed dependency tests are documented for manual execution in [Phase 6 Production Validation](deployment/phase-06-production-validation.md).
+
 ## Deployment Architecture
 
 ```mermaid
@@ -91,6 +103,14 @@ Every service deployment must define:
 - Prometheus scrape configuration.
 - OpenTelemetry exporter configuration.
 
+Phase 6 service deployments must also define:
+
+- ServiceAccount with least-privilege permissions.
+- NetworkPolicy for inbound and outbound traffic.
+- Secret references for credentials and provider keys.
+- Environment-specific values for local-like, staging, and production.
+- Rollback notes for image, config, and migration failures.
+
 ## Rollout Strategy
 
 - Use rolling updates for stateless services.
@@ -121,4 +141,3 @@ Every service deployment must define:
 - Managed service differences can affect Kafka retention, ClickHouse ingestion, Redis persistence, and PostgreSQL failover behavior.
 - Schema migration failures can block deploys if rollback design is not explicit.
 - Kubernetes resource limits require load-test feedback to tune safely.
-

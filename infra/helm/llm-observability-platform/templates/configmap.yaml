@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "llm-observability.name" . }}-config
+  labels:
+    {{- include "llm-observability.labels" . | nindent 4 }}
+data:
+  ENVIRONMENT: {{ .Values.global.environment | quote }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.global.otlpEndpoint | quote }}
+  SECURITY_ENABLED: {{ .Values.global.security.enabled | quote }}
+  OIDC_ISSUER_URI: {{ .Values.global.security.issuerUri | quote }}
+  OIDC_AUDIENCE: {{ .Values.global.security.audience | quote }}
+  SPRING_R2DBC_URL: {{ .Values.config.postgresR2dbcUrl | quote }}
+  SPRING_FLYWAY_URL: {{ .Values.config.postgresJdbcUrl | quote }}
+  SPRING_REDIS_HOST: {{ .Values.config.redisHost | quote }}
+  SPRING_REDIS_PORT: {{ .Values.config.redisPort | quote }}
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: {{ .Values.config.kafkaBootstrapServers | quote }}
+  CLICKHOUSE_HTTP_URL: {{ .Values.config.clickhouseHttpUrl | quote }}
+  CLICKHOUSE_DATABASE: {{ .Values.config.clickhouseDatabase | quote }}
+  NEXT_PUBLIC_ANALYTICS_API_BASE: {{ .Values.config.analyticsApiBase | quote }}
+  RETENTION_PROTECTED_CONTENT_DAYS: {{ default "30" .Values.config.protectedContentRetentionDays | quote }}
+  RETENTION_ANALYTICS_FACT_DAYS: {{ default "90" .Values.config.analyticsFactRetentionDays | quote }}

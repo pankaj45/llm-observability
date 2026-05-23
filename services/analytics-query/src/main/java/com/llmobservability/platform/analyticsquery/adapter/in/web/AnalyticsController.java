@@ -34,9 +34,11 @@ import java.util.UUID;
 @RequestMapping("/v1/analytics/inference")
 public class AnalyticsController {
     private final AnalyticsQueryUseCase useCase;
+    private final TenantProjectAuthorizer authorizer;
 
-    AnalyticsController(AnalyticsQueryUseCase useCase) {
+    AnalyticsController(AnalyticsQueryUseCase useCase, TenantProjectAuthorizer authorizer) {
         this.useCase = useCase;
+        this.authorizer = authorizer;
     }
 
     @GetMapping(path = "/summary", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -49,7 +51,8 @@ public class AnalyticsController {
             @RequestParam(required = false) String model,
             @RequestParam(required = false) String status
     ) {
-        return useCase.summary(new GetInferenceSummaryQuery(tenantId, projectId, from, to, provider, model, status))
+        return authorizer.requireTenantProject(tenantId, projectId, "analytics:read")
+                .then(useCase.summary(new GetInferenceSummaryQuery(tenantId, projectId, from, to, provider, model, status)))
                 .map(InferenceSummaryResponse::from);
     }
 
@@ -66,8 +69,9 @@ public class AnalyticsController {
             @RequestParam(required = false) String cursor,
             @RequestParam(defaultValue = "50") int limit
     ) {
-        return useCase.searchRequests(new SearchInferenceRequestsQuery(
-                        tenantId, projectId, from, to, provider, model, status, errorCode, cursor, limit))
+        return authorizer.requireTenantProject(tenantId, projectId, "analytics:read")
+                .then(useCase.searchRequests(new SearchInferenceRequestsQuery(
+                        tenantId, projectId, from, to, provider, model, status, errorCode, cursor, limit)))
                 .map(page -> new PagedInferenceRequestsResponse(page.items().stream().map(InferenceRequestRowResponse::from).toList(), page.nextCursor(), false));
     }
 
@@ -79,7 +83,8 @@ public class AnalyticsController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to
     ) {
-        return useCase.requestDetail(new GetInferenceRequestDetailQuery(requestId, tenantId, projectId, from, to))
+        return authorizer.requireTenantProject(tenantId, projectId, "analytics:read")
+                .then(useCase.requestDetail(new GetInferenceRequestDetailQuery(requestId, tenantId, projectId, from, to)))
                 .map(InferenceRequestDetailResponse::from);
     }
 

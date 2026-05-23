@@ -1,0 +1,20 @@
+global:
+  environment: production
+  security:
+    enabled: true
+    issuerUri: https://issuer.example.com
+    audience: llm-observability-platform
+
+secrets:
+  create: false
+  existingSecret: llm-observability-platform-secrets
+
+services:
+  web:
+    replicaCount: 3
+  inferenceGateway:
+    replicaCount: 3
+  analyticsQuery:
+    replicaCount: 3
+  ingestionWorker:
+    replicaCount: 2

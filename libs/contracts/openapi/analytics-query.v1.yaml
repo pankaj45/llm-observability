@@ -5,6 +5,8 @@ info:
   description: Phase 5 contract for ClickHouse-backed inference analytics and operator dashboards.
 servers:
   - url: http://localhost:8081
+security:
+  - bearerAuth: []
 tags:
   - name: analytics
 paths:
@@ -92,6 +94,11 @@ paths:
         "500":
           $ref: "#/components/responses/ErrorResponse"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   parameters:
     TenantId:
       name: tenantId

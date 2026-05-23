@@ -5,6 +5,8 @@ info:
   description: Phase 4 contract for conversation metadata, message history, timeline replay, and active stream cancellation.
 servers:
   - url: http://localhost:8080
+security:
+  - bearerAuth: []
 paths:
   /v1/conversations:
     get:
@@ -194,6 +196,11 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   parameters:
     ConversationId:
       name: conversationId

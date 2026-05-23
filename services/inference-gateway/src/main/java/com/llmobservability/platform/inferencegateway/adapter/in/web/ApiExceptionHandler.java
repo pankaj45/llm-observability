@@ -7,6 +7,7 @@ import org.slf4j.MDC;
 import org.springframework.core.codec.DecodingException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -60,6 +61,12 @@ class ApiExceptionHandler {
     ResponseEntity<ErrorEnvelope> illegalArgument(IllegalArgumentException exception) {
         return ResponseEntity.badRequest()
                 .body(ErrorEnvelope.of(ErrorCode.VALIDATION_INVALID_REQUEST.code(), exception.getMessage(), List.of()));
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    ResponseEntity<ErrorEnvelope> accessDenied(AccessDeniedException exception) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ErrorEnvelope.of("AUTHORIZATION_DENIED", "Authorization denied", List.of()));
     }
 
     @ExceptionHandler(Throwable.class)

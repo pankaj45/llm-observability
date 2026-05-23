@@ -17,12 +17,35 @@ libs/contracts/openapi/
 
 - HTTPS only outside local development.
 - Tenant and project scoping on all business APIs.
+- Bearer token authentication on all business APIs once Phase 6 hardening is enabled.
 - Validation at request boundaries.
 - Deterministic error envelope.
 - Trace context propagation.
 - Idempotency keys where retries can create duplicate work.
 - Pagination and time-window limits for collection and analytics APIs.
 - Rate limiting and request size limits once tenancy is defined.
+
+## Phase 6 Security Contract Requirements
+
+Phase 6 adds OIDC/JWT authentication and authorization requirements to existing business APIs.
+
+Required behavior:
+
+- Health, readiness, liveness, and Prometheus endpoints remain controlled by deployment/network policy.
+- Business APIs require `Authorization: Bearer <token>`.
+- JWTs are validated for issuer, audience, expiration, signature, and required claims.
+- Tenant/project request scope must match authorized JWT claims.
+- Authorization failures use the deterministic error envelope.
+- OpenAPI specs document bearer security schemes and endpoint security requirements.
+
+Recommended scopes:
+
+- `inference:write`
+- `inference:read`
+- `conversation:read`
+- `conversation:write`
+- `analytics:read`
+- `admin:read`
 
 ## Error Envelope
 

@@ -6,9 +6,13 @@ import com.llmobservability.platform.analyticsquery.domain.model.AnalyticsWindow
 import com.llmobservability.platform.analyticsquery.domain.model.InferenceRequestRow;
 import com.llmobservability.platform.analyticsquery.domain.model.InferenceSummary;
 import com.llmobservability.platform.analyticsquery.domain.model.InferenceTotals;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.security.oauth2.resource.reactive.ReactiveOAuth2ResourceServerAutoConfiguration;
+import org.springframework.boot.autoconfigure.security.reactive.ReactiveSecurityAutoConfiguration;
+import org.springframework.boot.autoconfigure.security.reactive.ReactiveUserDetailsServiceAutoConfiguration;
 import org.springframework.boot.test.autoconfigure.web.reactive.WebFluxTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
@@ -23,13 +27,27 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-@WebFluxTest(controllers = AnalyticsController.class)
+@WebFluxTest(
+        controllers = AnalyticsController.class,
+        excludeAutoConfiguration = {
+                ReactiveSecurityAutoConfiguration.class,
+                ReactiveUserDetailsServiceAutoConfiguration.class,
+                ReactiveOAuth2ResourceServerAutoConfiguration.class
+        })
 class AnalyticsControllerTest {
     @Autowired
     private WebTestClient webTestClient;
 
     @MockBean
     private AnalyticsQueryUseCase useCase;
+
+    @MockBean
+    private TenantProjectAuthorizer authorizer;
+
+    @BeforeEach
+    void allowAuthorization() {
+        when(authorizer.requireTenantProject(any(), any(), any())).thenReturn(Mono.empty());
+    }
 
     @Test
     void summaryDelegatesWithTenantProjectAndWindow() {

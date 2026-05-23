@@ -17,12 +17,14 @@ Current status: phase 5 analytics and operator UI implementation. The repository
 - [Engineering standards](docs/engineering-standards.md)
 - [Local development strategy](docs/local-development-strategy.md)
 - [Deployment strategy](docs/deployment-strategy.md)
+- [Phase 6 production validation](docs/deployment/phase-06-production-validation.md)
 - [Observability strategy](docs/observability-strategy.md)
 - [Phase 01 specification](docs/specs/phase-01-platform-bootstrap.md)
 - [Phase 02 specification](docs/specs/phase-02-inference-gateway-mvp.md)
 - [Phase 03 specification](docs/specs/phase-03-inference-logging-pipeline.md)
 - [Phase 04 specification](docs/specs/phase-04-conversation-continuity.md)
 - [Phase 05 specification](docs/specs/phase-05-analytics-and-operator-ui.md)
+- [Phase 06 specification](docs/specs/phase-06-production-hardening.md)
 - [ADR index](docs/adr/README.md)
 
 ## Target Stack
@@ -105,3 +107,9 @@ Phase 5 local notes:
 - Analytics APIs require `tenantId`, `projectId`, `from`, and `to`; query windows are capped at 30 days.
 - Analytics responses exclude raw prompt and completion content.
 - Run `mvn -pl services/analytics-query test` for the analytics query test suite.
+
+Phase 6 local notes:
+
+- API authentication is controlled by `SECURITY_ENABLED`; local defaults keep it disabled.
+- Production Helm values enable OIDC/JWT validation and require bearer tokens for business APIs.
+- Live container-backed PostgreSQL/Kafka/Redis/ClickHouse validation is documented in `docs/deployment/phase-06-production-validation.md` and can be run manually.

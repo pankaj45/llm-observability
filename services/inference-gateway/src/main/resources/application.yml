@@ -62,6 +62,10 @@ llm-observability:
   kafka:
     enabled: ${INFERENCE_KAFKA_ENABLED:false}
     lifecycle-topic: ${INFERENCE_LIFECYCLE_TOPIC:inference.lifecycle.v1}
+  security:
+    enabled: ${SECURITY_ENABLED:false}
+    issuer-uri: ${OIDC_ISSUER_URI:http://localhost:8090/realms/llm-observability}
+    audience: ${OIDC_AUDIENCE:llm-observability-platform}
 
 logging:
   pattern:

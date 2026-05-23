@@ -1,0 +1,27 @@
+groups:
+  - name: llm-observability.phase6
+    rules:
+      - alert: InferenceGatewayHighErrorRate
+        expr: sum(rate(http_server_requests_seconds_count{uri=~"/v1/inference.*",status=~"5.."}[5m])) / clamp_min(sum(rate(http_server_requests_seconds_count{uri=~"/v1/inference.*"}[5m])), 1) > 0.02
+        for: 10m
+        labels:
+          severity: page
+          runbook: docs/runbooks/inference-gateway-high-error-rate.md
+        annotations:
+          summary: Inference gateway error rate is above threshold.
+      - alert: AnalyticsQuerySlow
+        expr: histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{uri=~"/v1/analytics.*"}[5m])) by (le)) > 2
+        for: 10m
+        labels:
+          severity: ticket
+          runbook: docs/runbooks/analytics-query-slow.md
+        annotations:
+          summary: Analytics query p95 latency is above the Phase 6 target.
+      - alert: KafkaConsumerLagHigh
+        expr: kafka_consumer_fetch_manager_records_lag_max > 1000
+        for: 15m
+        labels:
+          severity: page
+          runbook: docs/runbooks/kafka-consumer-lag-high.md
+        annotations:
+          summary: Kafka consumer lag is sustained above threshold.

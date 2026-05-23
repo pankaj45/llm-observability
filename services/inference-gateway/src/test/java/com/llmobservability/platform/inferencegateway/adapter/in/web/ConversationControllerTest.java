@@ -9,9 +9,13 @@ import com.llmobservability.platform.inferencegateway.domain.model.MessageRole;
 import com.llmobservability.platform.inferencegateway.domain.model.RedactionState;
 import com.llmobservability.platform.inferencegateway.domain.model.StreamEvent;
 import com.llmobservability.platform.inferencegateway.domain.model.StreamEventType;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.security.oauth2.resource.reactive.ReactiveOAuth2ResourceServerAutoConfiguration;
+import org.springframework.boot.autoconfigure.security.reactive.ReactiveSecurityAutoConfiguration;
+import org.springframework.boot.autoconfigure.security.reactive.ReactiveUserDetailsServiceAutoConfiguration;
 import org.springframework.boot.test.autoconfigure.web.reactive.WebFluxTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
@@ -30,7 +34,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-@WebFluxTest(controllers = ConversationController.class)
+@WebFluxTest(
+        controllers = ConversationController.class,
+        excludeAutoConfiguration = {
+                ReactiveSecurityAutoConfiguration.class,
+                ReactiveUserDetailsServiceAutoConfiguration.class,
+                ReactiveOAuth2ResourceServerAutoConfiguration.class
+        })
 @TestPropertySource(properties = "spring.jackson.deserialization.fail-on-unknown-properties=true")
 class ConversationControllerTest {
     @Autowired
@@ -38,6 +48,14 @@ class ConversationControllerTest {
 
     @MockBean
     private InferenceGatewayUseCase useCase;
+
+    @MockBean
+    private TenantProjectAuthorizer authorizer;
+
+    @BeforeEach
+    void allowAuthorization() {
+        when(authorizer.requireTenantProject(any(), any(), any())).thenReturn(Mono.empty());
+    }
 
     @Test
     void continueStreamDelegatesWithConversationIdFromPath() {

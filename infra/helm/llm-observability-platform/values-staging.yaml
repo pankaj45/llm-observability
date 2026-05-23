@@ -1,0 +1,16 @@
+global:
+  environment: staging
+  security:
+    enabled: true
+    issuerUri: https://issuer.staging.example.com
+    audience: llm-observability-platform
+
+services:
+  web:
+    replicaCount: 1
+  inferenceGateway:
+    replicaCount: 1
+  analyticsQuery:
+    replicaCount: 1
+  ingestionWorker:
+    replicaCount: 1
