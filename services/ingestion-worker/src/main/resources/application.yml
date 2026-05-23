@@ -12,7 +12,7 @@ spring:
     password: ${SPRING_FLYWAY_PASSWORD:llm_observability}
     table: ${SPRING_FLYWAY_TABLE:ingestion_worker_flyway_schema_history}
   kafka:
-    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9094}
     consumer:
       group-id: ${INGESTION_KAFKA_GROUP_ID:ingestion-worker}
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer

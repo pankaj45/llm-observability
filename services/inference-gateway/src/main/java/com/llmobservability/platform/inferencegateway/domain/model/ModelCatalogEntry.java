@@ -6,11 +6,14 @@ public record ModelCatalogEntry(
         UUID providerId,
         UUID modelId,
         String providerKey,
+        String providerDisplayName,
         String modelKey,
+        String modelDisplayName,
         int contextWindowTokens,
         int maxOutputTokens,
         boolean providerSupportsStreaming,
         boolean providerSupportsCancellation
 ) {
 }
+
 

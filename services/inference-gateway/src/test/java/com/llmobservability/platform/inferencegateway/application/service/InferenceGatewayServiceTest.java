@@ -618,8 +618,18 @@ class InferenceGatewayServiceTest {
         }
 
         ModelCatalogRepository modelCatalogRepository() {
-            return (providerKey, modelKey) -> Mono.just(new ModelCatalogEntry(
-                    UUID.randomUUID(), UUID.randomUUID(), providerKey, modelKey, 1_000_000, 8192, true, false));
+            return new ModelCatalogRepository() {
+                @Override
+                public Mono<ModelCatalogEntry> findEnabledModel(String providerKey, String modelKey) {
+                    return Mono.just(new ModelCatalogEntry(
+                            UUID.randomUUID(), UUID.randomUUID(), providerKey, "Provider", modelKey, "Model", 1_000_000, 8192, true, false));
+                }
+
+                @Override
+                public Flux<ModelCatalogEntry> findAllEnabled() {
+                    return Flux.empty();
+                }
+            };
         }
 
         ActiveStreamStateStore activeStreamStateStore() {

@@ -1,0 +1,111 @@
+.shell {
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px;
+  background: #f7f9fb;
+}
+
+
+.title {
+  letter-spacing: 0;
+}
+
+.metric,
+.panel,
+.requestPanel,
+.detailPanel {
+  background: #ffffff;
+}
+
+.metricValue {
+  margin-top: 4px;
+  font-size: 30px;
+  font-weight: 760;
+  line-height: 1.1;
+}
+
+.bars {
+  min-height: 160px;
+}
+
+.barWrap {
+  display: flex;
+  align-items: flex-end;
+  width: 14px;
+  height: 132px;
+}
+
+.bar {
+  width: 100%;
+  border-radius: 4px 4px 0 0;
+  background: #1c7ed6;
+}
+
+.progressTrack {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #edf2f7;
+}
+
+.progressValue {
+  height: 100%;
+  border-radius: 4px;
+  background: #12b886;
+}
+
+.requestPanel {
+  grid-column: span 2;
+}
+
+.detailPanel {
+  min-height: 420px;
+}
+
+.row {
+  cursor: pointer;
+}
+
+.selectedRow {
+  cursor: pointer;
+  background: #e7f5ff;
+}
+
+.mono {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  color: #495057;
+}
+
+.miniStat {
+  padding: 10px;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  background: #fbfcfe;
+}
+
+.errorPanel {
+  border-color: #ffc9c9;
+  background: #fff5f5;
+}
+
+.errorRow {
+  padding: 8px 0;
+  border-bottom: 1px solid #f1f3f5;
+}
+
+.empty {
+  display: flex;
+  min-height: 96px;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed #d0d7de;
+  border-radius: 6px;
+}
+
+@media (max-width: 62em) {
+  .requestPanel {
+    grid-column: span 1;
+  }
+}

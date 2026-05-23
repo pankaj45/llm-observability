@@ -24,4 +24,7 @@ public interface InferenceGatewayUseCase {
     Mono<CancelInferenceResult> cancelConversationStream(CancelConversationStreamCommand command);
 
     Mono<InferenceStatusResult> status(GetInferenceStatusQuery query);
+
+    /** Returns all enabled models grouped by provider, for use by the chatbot UI model selector. */
+    Flux<ModelCatalogResult> listModels();
 }

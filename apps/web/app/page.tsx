@@ -2,499 +2,739 @@
 
 import {
   Badge,
-  Box,
   Button,
-  Group,
+  Collapse,
   Loader,
-  Paper,
-  PasswordInput,
-  ScrollArea,
   Select,
-  SimpleGrid,
-  Stack,
-  Table,
   Text,
+  Textarea,
   TextInput,
   ThemeIcon,
-  Title
+  Title,
 } from "@mantine/core";
 import {
   IconAlertTriangle,
-  IconChartBar,
-  IconClock,
-  IconDatabaseSearch,
-  IconKey,
-  IconRefresh,
-  IconSearch,
-  IconServerBolt
+  IconBrandHipchat,
+  IconPlayerStop,
+  IconSend,
+  IconSettings,
+  IconPlus,
 } from "@tabler/icons-react";
-import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import styles from "./page.module.css";
 
-type Totals = {
-  requestCount: number;
-  successCount: number;
-  failedCount: number;
-  cancelledCount: number;
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  averageDurationMs: number;
-  p95DurationMs: number;
-  errorRate: number;
-  estimatedCostUsd: number;
-};
+// ─── Constants ───────────────────────────────────────────────────────────────
 
-type TimeSeriesPoint = {
-  bucket: string;
-  requestCount: number;
-  successCount: number;
-  failedCount: number;
-  cancelledCount: number;
-  averageDurationMs: number;
-  p95DurationMs: number;
-  totalTokens: number;
-};
+const INFERENCE_BASE =
+  process.env.NEXT_PUBLIC_INFERENCE_API_BASE ?? "http://localhost:8080";
 
-type Breakdown = {
-  name: string;
-  requestCount: number;
-  percentage: number;
-  averageDurationMs: number;
-  totalTokens: number;
-  estimatedCostUsd: number;
-};
+const DEFAULT_TENANT = "tenant-a";
+const DEFAULT_PROJECT = "project-a";
+const PROVIDER = "gemini";
 
-type ErrorBreakdown = {
-  errorCode: string;
-  failureStage: string | null;
-  providerErrorCode: string | null;
-  requestCount: number;
-  retryableCount: number;
-};
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-type Summary = {
-  tenantId: string;
-  projectId: string;
-  totals: Totals;
-  timeSeries: TimeSeriesPoint[];
-  providers: Breakdown[];
-  models: Breakdown[];
-  statuses: Breakdown[];
-  topErrors: ErrorBreakdown[];
-  degraded: boolean;
-};
+type MessageStatus = "complete" | "streaming" | "cancelled" | "failed";
 
-type RequestRow = {
+interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  status: MessageStatus;
+  tokenCount?: number;
+  errorCode?: string;
+}
+
+interface Conversation {
+  conversationId: string;
+  title: string;
+  status: string;
+  messageCount: number;
+  updatedAt: string;
+  latestRequestStatus?: string | null;
+}
+
+interface SseEventPayload {
+  id: string;
+  type: string;
   requestId: string;
   conversationId: string;
-  provider: string;
-  model: string;
-  status: string;
-  startedAt: string;
-  completedAt: string | null;
-  durationMs: number;
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  estimatedCostUsd: number;
-  errorCode: string | null;
-  failureStage: string | null;
-  correlationId: string | null;
-  traceparent: string | null;
-  cursor: string;
-};
+  sequence: number;
+  occurredAt: string;
+  data: Record<string, unknown>;
+}
 
-type RequestDetail = RequestRow & {
-  tenantId: string;
-  projectId: string;
-  providerErrorCode: string | null;
-  retryable: boolean | null;
-  cancellationReason: string | null;
-  providerCancellationAttempted: boolean | null;
-  providerCancellationSucceeded: boolean | null;
-  events: Array<{
-    eventId: string;
-    eventName: string;
-    occurredAt: string;
-    status: string;
-    durationMs: number | null;
-    inputTokens: number | null;
-    outputTokens: number | null;
-    totalTokens: number | null;
-    errorCode: string | null;
-    failureStage: string | null;
-    cancellationReason: string | null;
+interface ModelCatalogResponse {
+  providers: Array<{
+    id: string;
+    name: string;
+    models: Array<{
+      id: string;
+      name: string;
+      contextWindowTokens: number;
+      maxOutputTokens: number;
+      supportsStreaming: boolean;
+      supportsCancellation: boolean;
+    }>;
   }>;
-};
-
-const apiBase = process.env.NEXT_PUBLIC_ANALYTICS_API_BASE ?? "http://localhost:8081";
-
-function isoDaysAgo(days: number) {
-  const date = new Date();
-  date.setUTCDate(date.getUTCDate() - days);
-  date.setUTCMinutes(0, 0, 0);
-  return date.toISOString();
 }
 
-function toInputValue(value: string) {
-  return value.slice(0, 16);
-}
+// ─── SSE helpers ─────────────────────────────────────────────────────────────
 
-function fromInputValue(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
-}
-
-function formatNumber(value: number) {
-  return new Intl.NumberFormat("en-US").format(Math.round(value));
-}
-
-function formatDuration(value: number) {
-  if (value >= 1000) {
-    return `${(value / 1000).toFixed(2)}s`;
+/**
+ * Parse a raw SSE text frame into event name + JSON payload.
+ * The gateway emits: id:, event:, data: lines separated by \n\n.
+ */
+function parseSseFrame(frame: string): { event: string; payload: SseEventPayload } | null {
+  let event = "";
+  let dataLine = "";
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    if (line.startsWith("data:")) dataLine = line.slice(5).trim();
   }
-  return `${Math.round(value)}ms`;
+  if (!event || !dataLine) return null;
+  try {
+    return { event, payload: JSON.parse(dataLine) as SseEventPayload };
+  } catch {
+    return null;
+  }
 }
 
-function statusColor(status: string) {
-  if (status === "COMPLETED") return "teal";
-  if (status === "FAILED") return "red";
-  if (status === "CANCELLED") return "yellow";
-  return "indigo";
+// ─── Settings persistence ─────────────────────────────────────────────────────
+
+function loadSetting(key: string, fallback: string) {
+  if (typeof window === "undefined") return fallback;
+  return window.localStorage.getItem(key) ?? fallback;
 }
 
-export default function HomePage() {
-  const [tenantId, setTenantId] = useState("tenant-a");
-  const [projectId, setProjectId] = useState("project-a");
-  const [from, setFrom] = useState(toInputValue(isoDaysAgo(7)));
-  const [to, setTo] = useState(toInputValue(new Date().toISOString()));
-  const [provider, setProvider] = useState("");
+function saveSetting(key: string, value: string) {
+  window.localStorage.setItem(key, value);
+}
+
+// ─── Relative time ────────────────────────────────────────────────────────────
+
+function relativeTime(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
+export default function ChatPage() {
+  // ── settings ──
+  const [tenantId, setTenantId] = useState(DEFAULT_TENANT);
+  const [projectId, setProjectId] = useState(DEFAULT_PROJECT);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // ── conversation list ──
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [convListError, setConvListError] = useState<string | null>(null);
+  const [convListLoading, setConvListLoading] = useState(false);
+
+  // ── active chat ──
+  const [activeConvId, setActiveConvId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+
+  // ── input ──
+  const [input, setInput] = useState("");
   const [model, setModel] = useState("");
-  const [status, setStatus] = useState<string | null>(null);
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [requests, setRequests] = useState<RequestRow[]>([]);
-  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<RequestDetail | null>(null);
-  const [authToken, setAuthToken] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [modelOptions, setModelOptions] = useState<{ value: string; label: string; group?: string }[]>([]);
+  const [streaming, setStreaming] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
-  const params = useMemo(() => {
-    const query = new URLSearchParams({
-      tenantId,
-      projectId,
-      from: fromInputValue(from),
-      to: fromInputValue(to)
-    });
-    if (provider.trim()) query.set("provider", provider.trim());
-    if (model.trim()) query.set("model", model.trim());
-    if (status) query.set("status", status);
-    return query;
-  }, [tenantId, projectId, from, to, provider, model, status]);
+  // ── internals ──
+  const abortRef = useRef<AbortController | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
+  // ── hydrate settings from localStorage ──
   useEffect(() => {
-    setAuthToken(window.localStorage.getItem("llm-observability.authToken") ?? "");
+    setTenantId(loadSetting("llm-obs.tenantId", DEFAULT_TENANT));
+    setProjectId(loadSetting("llm-obs.projectId", DEFAULT_PROJECT));
   }, []);
 
-  function requestHeaders() {
-    return authToken.trim() ? { Authorization: `Bearer ${authToken.trim()}` } : undefined;
+  // ── load conversation list on mount and when tenant/project changes ──
+  useEffect(() => {
+    void loadConversations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, projectId]);
+
+  // ── load model catalog ──
+  useEffect(() => {
+    void loadCatalog();
+  }, []);
+
+  // ── scroll to bottom on new messages ──
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // ─── API helpers ────────────────────────────────────────────────────────────
+
+  function inferenceHeaders(): HeadersInit {
+    return { "Content-Type": "application/json" };
   }
 
-  function updateAuthToken(value: string) {
-    setAuthToken(value);
-    if (value.trim()) {
-      window.localStorage.setItem("llm-observability.authToken", value);
-    } else {
-      window.localStorage.removeItem("llm-observability.authToken");
+  async function loadCatalog() {
+    try {
+      const res = await fetch(`${INFERENCE_BASE}/v1/catalog/models`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json()) as ModelCatalogResponse;
+      
+      const options = body.providers.flatMap((p) =>
+        p.models.map((m) => ({
+          value: m.id,
+          label: m.name,
+          group: p.name,
+        }))
+      );
+      setModelOptions(options);
+      
+      // Default to the first available model if none selected
+      if (options.length > 0 && !model) {
+        // Try to pick a flash model as default, else just the first one
+        const defaultOpt = options.find(o => o.value.includes('flash')) ?? options[0];
+        setModel(defaultOpt.value);
+      }
+    } catch (err) {
+      console.error("Failed to load model catalog:", err);
+      // Fallback
+      setModelOptions([{ value: "gemini-1.5-flash", label: "Gemini 1.5 Flash (Fallback)" }]);
+      if (!model) setModel("gemini-1.5-flash");
     }
   }
 
-  async function loadDashboard() {
-    setLoading(true);
-    setError(null);
+  async function loadConversations() {
+    setConvListLoading(true);
+    setConvListError(null);
     try {
-      const [summaryResponse, requestsResponse] = await Promise.all([
-        fetch(`${apiBase}/v1/analytics/inference/summary?${params.toString()}`, { headers: requestHeaders() }),
-        fetch(`${apiBase}/v1/analytics/inference/requests?${params.toString()}&limit=50`, { headers: requestHeaders() })
-      ]);
-      if (!summaryResponse.ok || !requestsResponse.ok) {
-        throw new Error("Analytics query failed");
-      }
-      const nextSummary = (await summaryResponse.json()) as Summary;
-      const requestPage = (await requestsResponse.json()) as { items: RequestRow[] };
-      setSummary(nextSummary);
-      setRequests(requestPage.items);
-      setSelectedRequestId(requestPage.items[0]?.requestId ?? null);
-    } catch (caught) {
-      setSummary(null);
-      setRequests([]);
-      setSelectedRequestId(null);
-      setDetail(null);
-      setError(caught instanceof Error ? caught.message : "Analytics query failed");
+      const params = new URLSearchParams({ tenantId, projectId, limit: "30" });
+      const res = await fetch(`${INFERENCE_BASE}/v1/conversations?${params}`, {
+        headers: inferenceHeaders(),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json()) as { items: Conversation[] };
+      setConversations(body.items);
+    } catch (err) {
+      setConvListError(err instanceof Error ? err.message : "Failed to load conversations");
     } finally {
-      setLoading(false);
+      setConvListLoading(false);
     }
   }
 
-  async function loadDetail(requestId: string) {
-    setDetailLoading(true);
+  async function loadConversationHistory(convId: string) {
+    setHistoryLoading(true);
+    setHistoryError(null);
+    setMessages([]);
     try {
-      const response = await fetch(`${apiBase}/v1/analytics/inference/requests/${requestId}?${params.toString()}`, { headers: requestHeaders() });
-      if (!response.ok) {
-        throw new Error("Request detail failed");
+      const params = new URLSearchParams({ tenantId, projectId, limit: "200" });
+      const res = await fetch(
+        `${INFERENCE_BASE}/v1/conversations/${convId}/messages?${params}`,
+        { headers: inferenceHeaders() }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json()) as {
+        items: Array<{
+          messageId: string;
+          role: "USER" | "ASSISTANT" | "SYSTEM" | "TOOL";
+          content: string;
+          metadata?: Record<string, string>;
+        }>;
+      };
+      const loaded: ChatMessage[] = body.items
+        .filter((m) => m.role === "USER" || m.role === "ASSISTANT")
+        .map((m) => ({
+          id: m.messageId,
+          role: m.role === "USER" ? "user" : "assistant",
+          content: m.content,
+          status:
+            m.metadata?.terminalState === "cancelled"
+              ? "cancelled"
+              : m.metadata?.terminalState === "failed"
+              ? "failed"
+              : "complete",
+          errorCode: undefined,
+        }));
+      setMessages(loaded);
+    } catch (err) {
+      setHistoryError(
+        err instanceof Error ? err.message : "Failed to load conversation history"
+      );
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  // ─── Send message ────────────────────────────────────────────────────────────
+
+  async function handleSend() {
+    const text = input.trim();
+    if (!text || streaming) return;
+
+    setSendError(null);
+    setInput("");
+
+    // Append user message immediately
+    const userMsgId = crypto.randomUUID();
+    const userMsg: ChatMessage = {
+      id: userMsgId,
+      role: "user",
+      content: text,
+      status: "complete",
+    };
+
+    // Placeholder assistant message while streaming
+    const assistantMsgId = crypto.randomUUID();
+    const assistantMsg: ChatMessage = {
+      id: assistantMsgId,
+      role: "assistant",
+      content: "",
+      status: "streaming",
+    };
+
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    setStreaming(true);
+
+    const idempotencyKey = crypto.randomUUID();
+    const abort = new AbortController();
+    abortRef.current = abort;
+
+    try {
+      let url: string;
+      let body: Record<string, unknown>;
+
+      if (activeConvId) {
+        // Continue existing conversation — send only the new user turn
+        url = `${INFERENCE_BASE}/v1/conversations/${activeConvId}/messages/stream`;
+        body = {
+          tenantId,
+          projectId,
+          provider: PROVIDER,
+          model,
+          messages: [{ role: "user", content: text }],
+          parameters: {},
+          idempotencyKey,
+        };
+      } else {
+        // Start new conversation
+        url = `${INFERENCE_BASE}/v1/inference/stream`;
+        body = {
+          tenantId,
+          projectId,
+          provider: PROVIDER,
+          model,
+          messages: [{ role: "user", content: text }],
+          parameters: {},
+          idempotencyKey,
+        };
       }
-      setDetail((await response.json()) as RequestDetail);
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: abort.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        throw new Error(`Server error: HTTP ${res.status}`);
+      }
+
+      // ── Parse SSE stream ──
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let newConvId: string | null = null;
+      let totalOutputTokens = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // SSE frames are separated by double newlines
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+
+        for (const frame of frames) {
+          const parsed = parseSseFrame(frame);
+          if (!parsed) continue;
+
+          const { event, payload } = parsed;
+          const data = payload.data;
+
+          if (event === "request.accepted" || event === "token.delta" || event === "usage.delta") {
+            // Extract conversationId from first event (new conversation)
+            if (!newConvId && payload.conversationId) {
+              newConvId = payload.conversationId;
+              setActiveConvId(payload.conversationId);
+            }
+          }
+
+          if (event === "token.delta") {
+            const delta = typeof data.delta === "string" ? data.delta : "";
+            if (typeof data.outputTokens === "number") totalOutputTokens = data.outputTokens;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgId
+                  ? { ...m, content: m.content + delta, status: "streaming" }
+                  : m
+              )
+            );
+          }
+
+          if (event === "usage.delta") {
+            if (typeof data.outputTokens === "number") totalOutputTokens = data.outputTokens;
+          }
+
+          if (event === "request.completed") {
+            const inputToks = typeof data.inputTokens === "number" ? data.inputTokens : 0;
+            const outputToks = typeof data.outputTokens === "number" ? data.outputTokens : totalOutputTokens;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgId
+                  ? { ...m, status: "complete", tokenCount: inputToks + outputToks }
+                  : m
+              )
+            );
+          }
+
+          if (event === "request.cancelled") {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgId ? { ...m, status: "cancelled" } : m
+              )
+            );
+          }
+
+          if (event === "request.failed") {
+            const errorCode =
+              typeof data.errorCode === "string" ? data.errorCode : "UNKNOWN_ERROR";
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgId ? { ...m, status: "failed", errorCode } : m
+              )
+            );
+          }
+        }
+      }
+    } catch (err) {
+      if ((err as { name?: string }).name === "AbortError") {
+        // User clicked Stop — the request.cancelled event handles the UI update
+      } else {
+        setSendError(err instanceof Error ? err.message : "Failed to send message");
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMsgId ? { ...m, status: "failed", errorCode: "NETWORK_ERROR" } : m
+          )
+        );
+      }
+    } finally {
+      setStreaming(false);
+      abortRef.current = null;
+      // Refresh conversation list to show new/updated conversation
+      void loadConversations();
+    }
+  }
+
+  // ─── Stop active stream ──────────────────────────────────────────────────────
+
+  async function handleStop() {
+    if (!activeConvId) {
+      // Abort the fetch if we don't have a conversationId yet
+      abortRef.current?.abort();
+      return;
+    }
+    try {
+      const params = new URLSearchParams({ tenantId, projectId });
+      await fetch(`${INFERENCE_BASE}/v1/conversations/${activeConvId}/stream?${params}`, {
+        method: "DELETE",
+        headers: { "X-Requested-By": "chatbot-ui", "X-Cancel-Reason": "user_requested" },
+      });
+      // The SSE stream will emit request.cancelled which updates the UI
     } catch {
-      setDetail(null);
-    } finally {
-      setDetailLoading(false);
+      // Fallback: abort the fetch connection
+      abortRef.current?.abort();
     }
   }
 
-  useEffect(() => {
-    void loadDashboard();
-  }, []);
+  // ─── Select conversation ─────────────────────────────────────────────────────
 
-  useEffect(() => {
-    if (selectedRequestId) {
-      void loadDetail(selectedRequestId);
+  function handleSelectConversation(conv: Conversation) {
+    if (conv.conversationId === activeConvId) return;
+    if (streaming) return; // Don't switch while streaming
+    setActiveConvId(conv.conversationId);
+    void loadConversationHistory(conv.conversationId);
+  }
+
+  // ─── New chat ────────────────────────────────────────────────────────────────
+
+  function handleNewChat() {
+    if (streaming) return;
+    setActiveConvId(null);
+    setMessages([]);
+    setSendError(null);
+    setHistoryError(null);
+  }
+
+  // ─── Settings ────────────────────────────────────────────────────────────────
+
+  function handleTenantChange(value: string) {
+    setTenantId(value);
+    saveSetting("llm-obs.tenantId", value);
+  }
+
+  function handleProjectChange(value: string) {
+    setProjectId(value);
+    saveSetting("llm-obs.projectId", value);
+  }
+
+  // ─── Handle Enter key ────────────────────────────────────────────────────────
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      void handleSend();
     }
-  }, [selectedRequestId]);
+  }
 
-  const totals = summary?.totals;
-  const maxSeries = Math.max(1, ...(summary?.timeSeries.map((point) => point.requestCount) ?? [1]));
+  // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <Box component="main" className={styles.shell}>
-      <Stack gap="lg">
-        <Group justify="space-between" align="flex-start" gap="md">
-          <div>
-            <Title order={1} className={styles.title}>LLM Observability</Title>
-            <Text c="dimmed">Inference analytics</Text>
-          </div>
-          <Group gap="xs">
-            {summary?.degraded ? <Badge color="yellow">Degraded</Badge> : null}
-            <Button leftSection={<IconRefresh size={16} />} onClick={loadDashboard} loading={loading}>
-              Refresh
-            </Button>
-          </Group>
-        </Group>
+    <div className={styles.shell}>
+      {/* ── Sidebar ── */}
+      <aside className={styles.sidebar}>
+        <div className={styles.sidebarHeader}>
+          <Button
+            id="new-chat-btn"
+            className={styles.newChatBtn}
+            leftSection={<IconPlus size={14} />}
+            variant="light"
+            size="sm"
+            onClick={handleNewChat}
+            disabled={streaming}
+          >
+            New Chat
+          </Button>
+        </div>
 
-        <Paper withBorder radius="sm" p="md">
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="sm">
-            <TextInput label="Tenant" value={tenantId} onChange={(event) => setTenantId(event.currentTarget.value)} />
-            <TextInput label="Project" value={projectId} onChange={(event) => setProjectId(event.currentTarget.value)} />
-            <TextInput label="From" type="datetime-local" value={from} onChange={(event) => setFrom(event.currentTarget.value)} />
-            <TextInput label="To" type="datetime-local" value={to} onChange={(event) => setTo(event.currentTarget.value)} />
-            <TextInput label="Provider" value={provider} onChange={(event) => setProvider(event.currentTarget.value)} />
-            <TextInput label="Model" value={model} onChange={(event) => setModel(event.currentTarget.value)} />
-            <Select
-              label="Status"
-              clearable
-              value={status}
-              onChange={setStatus}
-              data={["ACCEPTED", "STREAMING", "COMPLETED", "CANCELLED", "FAILED"]}
-            />
-            <PasswordInput
-              label="Bearer token"
-              leftSection={<IconKey size={16} />}
-              value={authToken}
-              onChange={(event) => updateAuthToken(event.currentTarget.value)}
-            />
-          </SimpleGrid>
-          <Group justify="flex-end" mt="md">
-            <Button leftSection={<IconSearch size={16} />} onClick={loadDashboard} loading={loading}>
-              Apply
-            </Button>
-          </Group>
-        </Paper>
-
-        {error ? (
-          <Paper withBorder radius="sm" p="md" className={styles.errorPanel}>
-            <Group gap="sm">
-              <ThemeIcon color="red" variant="light"><IconAlertTriangle size={18} /></ThemeIcon>
-              <Text fw={600}>{error}</Text>
-            </Group>
-          </Paper>
-        ) : null}
-
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-          <MetricCard icon={<IconServerBolt size={18} />} label="Requests" value={formatNumber(totals?.requestCount ?? 0)} sub={`${formatNumber(totals?.successCount ?? 0)} completed`} color="teal" />
-          <MetricCard icon={<IconClock size={18} />} label="P95 latency" value={formatDuration(totals?.p95DurationMs ?? 0)} sub={`${formatDuration(totals?.averageDurationMs ?? 0)} average`} color="indigo" />
-          <MetricCard icon={<IconChartBar size={18} />} label="Tokens" value={formatNumber(totals?.totalTokens ?? 0)} sub={`${formatNumber(totals?.outputTokens ?? 0)} output`} color="grape" />
-          <MetricCard icon={<IconAlertTriangle size={18} />} label="Error rate" value={`${(((totals?.errorRate ?? 0) * 100)).toFixed(1)}%`} sub={`${formatNumber(totals?.failedCount ?? 0)} failed`} color="red" />
-        </SimpleGrid>
-
-        <SimpleGrid cols={{ base: 1, lg: 3 }} spacing="md">
-          <Paper withBorder radius="sm" p="md" className={styles.panel}>
-            <Group justify="space-between" mb="sm">
-              <Text fw={700}>Volume Trend</Text>
-              {loading ? <Loader size="sm" /> : null}
-            </Group>
-            <Group align="end" gap={6} className={styles.bars}>
-              {(summary?.timeSeries ?? []).map((point) => (
-                <div key={point.bucket} className={styles.barWrap}>
-                  <div
-                    className={styles.bar}
-                    style={{ height: `${Math.max(6, (point.requestCount / maxSeries) * 120)}px` }}
-                    title={`${new Date(point.bucket).toLocaleString()}: ${point.requestCount}`}
-                  />
-                </div>
-              ))}
-              {!summary?.timeSeries.length ? <EmptyState label="No trend data" /> : null}
-            </Group>
-          </Paper>
-
-          <BreakdownPanel title="Providers" items={summary?.providers ?? []} />
-          <BreakdownPanel title="Models" items={summary?.models ?? []} />
-        </SimpleGrid>
-
-        <SimpleGrid cols={{ base: 1, lg: 3 }} spacing="md">
-          <Paper withBorder radius="sm" p="md" className={styles.requestPanel}>
-            <Text fw={700} mb="sm">Requests</Text>
-            <ScrollArea h={420}>
-              <Table striped highlightOnHover withTableBorder={false}>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Status</Table.Th>
-                    <Table.Th>Model</Table.Th>
-                    <Table.Th>Latency</Table.Th>
-                    <Table.Th>Tokens</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {requests.map((request) => (
-                    <Table.Tr
-                      key={request.requestId}
-                      className={selectedRequestId === request.requestId ? styles.selectedRow : styles.row}
-                      onClick={() => setSelectedRequestId(request.requestId)}
-                    >
-                      <Table.Td><Badge color={statusColor(request.status)} variant="light">{request.status}</Badge></Table.Td>
-                      <Table.Td>
-                        <Text size="sm" fw={600}>{request.provider}</Text>
-                        <Text size="xs" c="dimmed">{request.model}</Text>
-                      </Table.Td>
-                      <Table.Td>{formatDuration(request.durationMs)}</Table.Td>
-                      <Table.Td>{formatNumber(request.totalTokens)}</Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-              {!requests.length && !loading ? <EmptyState label="No requests" /> : null}
-            </ScrollArea>
-          </Paper>
-
-          <Paper withBorder radius="sm" p="md" className={styles.detailPanel}>
-            <Group justify="space-between" mb="sm">
-              <Text fw={700}>Request Trace</Text>
-              {detailLoading ? <Loader size="sm" /> : null}
-            </Group>
-            {detail ? (
-              <Stack gap="sm">
-                <Group gap="xs">
-                  <Badge color={statusColor(detail.status)}>{detail.status}</Badge>
-                  {detail.errorCode ? <Badge color="red" variant="light">{detail.errorCode}</Badge> : null}
-                </Group>
-                <Text className={styles.mono}>{detail.requestId}</Text>
-                <SimpleGrid cols={2} spacing="xs">
-                  <MiniStat label="Duration" value={formatDuration(detail.durationMs)} />
-                  <MiniStat label="Tokens" value={formatNumber(detail.totalTokens)} />
-                  <MiniStat label="Input" value={formatNumber(detail.inputTokens)} />
-                  <MiniStat label="Output" value={formatNumber(detail.outputTokens)} />
-                </SimpleGrid>
-                <Stack gap={8} mt="xs">
-                  {detail.events.map((event) => (
-                    <Group key={event.eventId} align="flex-start" gap="sm" wrap="nowrap">
-                      <ThemeIcon color={statusColor(event.status)} variant="light" size="sm">
-                        <IconDatabaseSearch size={14} />
-                      </ThemeIcon>
-                      <Box>
-                        <Text size="sm" fw={600}>{event.eventName}</Text>
-                        <Text size="xs" c="dimmed">{new Date(event.occurredAt).toLocaleString()}</Text>
-                      </Box>
-                    </Group>
-                  ))}
-                </Stack>
-              </Stack>
-            ) : (
-              <EmptyState label="Select a request" />
-            )}
-          </Paper>
-
-          <Paper withBorder radius="sm" p="md" className={styles.panel}>
-            <Text fw={700} mb="sm">Top Errors</Text>
-            <Stack gap="xs">
-              {(summary?.topErrors ?? []).map((item) => (
-                <Group key={item.errorCode} justify="space-between" className={styles.errorRow}>
-                  <Box>
-                    <Text size="sm" fw={600}>{item.errorCode}</Text>
-                    <Text size="xs" c="dimmed">{item.failureStage ?? "unknown stage"}</Text>
-                  </Box>
-                  <Badge color="red" variant="light">{item.requestCount}</Badge>
-                </Group>
-              ))}
-              {!summary?.topErrors.length ? <EmptyState label="No errors" /> : null}
-            </Stack>
-          </Paper>
-        </SimpleGrid>
-      </Stack>
-    </Box>
-  );
-}
-
-function MetricCard({ icon, label, value, sub, color }: { icon: ReactNode; label: string; value: string; sub: string; color: string }) {
-  return (
-    <Paper withBorder radius="sm" p="md" className={styles.metric}>
-      <Group justify="space-between" align="flex-start">
-        <Box>
-          <Text size="sm" c="dimmed">{label}</Text>
-          <Text className={styles.metricValue}>{value}</Text>
-          <Text size="xs" c="dimmed">{sub}</Text>
-        </Box>
-        <ThemeIcon color={color} variant="light">{icon}</ThemeIcon>
-      </Group>
-    </Paper>
-  );
-}
-
-function BreakdownPanel({ title, items }: { title: string; items: Breakdown[] }) {
-  return (
-    <Paper withBorder radius="sm" p="md" className={styles.panel}>
-      <Text fw={700} mb="sm">{title}</Text>
-      <Stack gap="sm">
-        {items.map((item) => (
-          <Box key={item.name}>
-            <Group justify="space-between" mb={4}>
-              <Text size="sm" fw={600} truncate="end">{item.name}</Text>
-              <Text size="sm" c="dimmed">{formatNumber(item.requestCount)}</Text>
-            </Group>
-            <div className={styles.progressTrack}>
-              <div className={styles.progressValue} style={{ width: `${Math.max(4, item.percentage * 100)}%` }} />
+        <div className={styles.convList}>
+          {convListLoading && (
+            <div style={{ padding: "12px", textAlign: "center" }}>
+              <Loader size="sm" />
             </div>
-          </Box>
-        ))}
-        {!items.length ? <EmptyState label={`No ${title.toLowerCase()}`} /> : null}
-      </Stack>
-    </Paper>
+          )}
+          {convListError && (
+            <Text size="xs" c="red" p="sm">
+              {convListError}
+            </Text>
+          )}
+          {!convListLoading &&
+            conversations.map((conv) => (
+              <div
+                key={conv.conversationId}
+                id={`conv-${conv.conversationId}`}
+                className={
+                  conv.conversationId === activeConvId
+                    ? `${styles.convItem} ${styles.convItemActive}`
+                    : styles.convItem
+                }
+                onClick={() => handleSelectConversation(conv)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => e.key === "Enter" && handleSelectConversation(conv)}
+              >
+                <div className={styles.convTitle}>{conv.title}</div>
+                <div className={styles.convMeta}>
+                  {conv.messageCount} messages · {relativeTime(conv.updatedAt)}
+                </div>
+              </div>
+            ))}
+          {!convListLoading && conversations.length === 0 && !convListError && (
+            <Text size="xs" c="dimmed" p="sm" ta="center">
+              No conversations yet
+            </Text>
+          )}
+        </div>
+
+        <div className={styles.sidebarFooter}>
+          <button
+            className={styles.settingsToggle}
+            onClick={() => setSettingsOpen((o) => !o)}
+            aria-expanded={settingsOpen}
+          >
+            <IconSettings size={13} />
+            {settingsOpen ? "Hide settings" : "Settings"}
+          </button>
+          <Collapse in={settingsOpen}>
+            <div className={styles.settingsPanel}>
+              <TextInput
+                id="tenant-id-input"
+                label="Tenant ID"
+                size="xs"
+                value={tenantId}
+                onChange={(e) => handleTenantChange(e.currentTarget.value)}
+              />
+              <TextInput
+                id="project-id-input"
+                label="Project ID"
+                size="xs"
+                value={projectId}
+                onChange={(e) => handleProjectChange(e.currentTarget.value)}
+              />
+            </div>
+          </Collapse>
+        </div>
+      </aside>
+
+      {/* ── Chat area ── */}
+      <div className={styles.chatArea}>
+        <div className={styles.messagesScroll}>
+          <div className={styles.messagesInner}>
+            {historyLoading && (
+              <div style={{ textAlign: "center", padding: 32 }}>
+                <Loader size="sm" />
+                <Text size="xs" c="dimmed" mt={8}>
+                  Loading history…
+                </Text>
+              </div>
+            )}
+            {historyError && (
+              <div className={styles.errorNotice}>
+                <IconAlertTriangle size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                {historyError}
+              </div>
+            )}
+            {!historyLoading && messages.length === 0 && !historyError && (
+              <div className={styles.emptyState}>
+                <ThemeIcon color="indigo" variant="light" size={56} radius="xl">
+                  <IconBrandHipchat size={28} />
+                </ThemeIcon>
+                <Title order={4} c="dimmed">
+                  Start a conversation
+                </Title>
+                <Text size="sm" c="dimmed" ta="center" maw={300}>
+                  Type a message below and press Enter. Your conversations are saved and you
+                  can resume them from the sidebar.
+                </Text>
+              </div>
+            )}
+            {messages.map((msg) => (
+              <MessageBubble key={msg.id} msg={msg} />
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+        </div>
+
+        {/* ── Input bar ── */}
+        <div className={styles.inputBar}>
+          <div className={styles.inputInner}>
+            {sendError && (
+              <div className={styles.errorNotice}>
+                <IconAlertTriangle size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                {sendError}
+              </div>
+            )}
+            <div className={styles.inputRow}>
+              <Textarea
+                id="chat-input"
+                className={styles.inputTextarea}
+                placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
+                value={input}
+                onChange={(e) => setInput(e.currentTarget.value)}
+                onKeyDown={handleKeyDown}
+                autosize
+                minRows={1}
+                maxRows={6}
+                disabled={streaming}
+                radius="md"
+              />
+              <div className={styles.inputActions}>
+                <Select
+                  id="model-select"
+                  data={modelOptions}
+                  value={model}
+                  onChange={(v) => { if (v) setModel(v); }}
+                  size="sm"
+                  w={170}
+                  disabled={streaming || modelOptions.length === 0}
+                  radius="md"
+                />
+                {streaming ? (
+                  <Button
+                    id="stop-btn"
+                    color="red"
+                    variant="light"
+                    leftSection={<IconPlayerStop size={15} />}
+                    onClick={handleStop}
+                    radius="md"
+                    size="sm"
+                  >
+                    Stop
+                  </Button>
+                ) : (
+                  <Button
+                    id="send-btn"
+                    leftSection={<IconSend size={15} />}
+                    onClick={() => void handleSend()}
+                    disabled={!input.trim()}
+                    radius="md"
+                    size="sm"
+                  >
+                    Send
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <Box className={styles.miniStat}>
-      <Text size="xs" c="dimmed">{label}</Text>
-      <Text size="sm" fw={700}>{value}</Text>
-    </Box>
-  );
-}
+// ─── Message bubble sub-component ─────────────────────────────────────────────
 
-function EmptyState({ label }: { label: string }) {
+function MessageBubble({ msg }: { msg: ChatMessage }) {
+  const isUser = msg.role === "user";
+  const isStreaming = msg.status === "streaming";
+  const isCancelled = msg.status === "cancelled";
+  const isFailed = msg.status === "failed";
+
+  let bubbleClass = isUser ? styles.bubbleUser : styles.bubbleAssistant;
+  if (isCancelled) bubbleClass += ` ${styles.bubbleCancelled}`;
+  if (isFailed) bubbleClass += ` ${styles.bubbleFailed}`;
+
   return (
-    <Box className={styles.empty}>
-      <Text size="sm" c="dimmed">{label}</Text>
-    </Box>
+    <div className={`${styles.msgRow} ${isUser ? styles.msgRowUser : styles.msgRowAssistant}`}>
+      <div className={`${styles.bubble} ${bubbleClass}`}>
+        {msg.content}
+        {isStreaming && <span className={styles.streamingCursor} aria-hidden="true" />}
+        {(isCancelled || isFailed) && (
+          <div className={styles.bubgeStatusRow}>
+            {isCancelled && (
+              <Badge color="orange" variant="light" size="xs">
+                Cancelled
+              </Badge>
+            )}
+            {isFailed && (
+              <Badge color="red" variant="light" size="xs">
+                {msg.errorCode ?? "Failed"}
+              </Badge>
+            )}
+          </div>
+        )}
+        {msg.tokenCount != null && msg.tokenCount > 0 && (
+          <div className={styles.bubbleMeta}>{msg.tokenCount} tokens</div>
+        )}
+      </div>
+    </div>
   );
 }

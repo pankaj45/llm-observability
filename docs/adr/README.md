@@ -20,6 +20,7 @@ ADRs capture major decisions that affect architecture, operations, data contract
 - [ADR-0014: Phase 4 Conversation Continuity](ADR-0014-phase-04-conversation-continuity.md)
 - [ADR-0015: Phase 5 Analytics Query and Operator UI](ADR-0015-phase-05-analytics-query-and-operator-ui.md)
 - [ADR-0016: Phase 6 Production Hardening Boundary](ADR-0016-phase-06-production-hardening-boundary.md)
+- [ADR-0017: Chatbot UI — Routing, SSE Parsing, and UX Design](ADR-0017-chatbot-ui-routing-and-sse-design.md)
 
 ## Required ADR Format
 

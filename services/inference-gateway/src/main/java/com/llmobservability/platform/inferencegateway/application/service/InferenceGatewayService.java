@@ -46,6 +46,7 @@ import com.llmobservability.platform.inferencegateway.domain.model.ModelCatalogE
 import com.llmobservability.platform.inferencegateway.domain.model.RedactionState;
 import com.llmobservability.platform.inferencegateway.domain.model.StreamEvent;
 import com.llmobservability.platform.inferencegateway.domain.model.StreamEventType;
+import com.llmobservability.platform.inferencegateway.application.port.in.ModelCatalogResult;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -275,6 +276,21 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                                 inferenceErrorRepository.findLatest(request.id()).defaultIfEmpty(emptyError(request.id()))
                         )
                         .map(tuple -> toStatusResult(request, tuple.getT1(), tuple.getT2())));
+    }
+
+    @Override
+    public Flux<ModelCatalogResult> listModels() {
+        return modelCatalogRepository.findAllEnabled()
+                .map(entry -> new ModelCatalogResult(
+                        entry.providerKey(),
+                        entry.providerDisplayName(),
+                        entry.modelKey(),
+                        entry.modelDisplayName(),
+                        entry.contextWindowTokens(),
+                        entry.maxOutputTokens(),
+                        entry.providerSupportsStreaming(),
+                        entry.providerSupportsCancellation()
+                ));
     }
 
     private Mono<Void> validate(StartInferenceCommand command) {
