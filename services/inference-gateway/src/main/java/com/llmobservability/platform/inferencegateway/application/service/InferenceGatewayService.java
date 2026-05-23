@@ -30,6 +30,9 @@ import com.llmobservability.platform.inferencegateway.application.port.out.Lifec
 import com.llmobservability.platform.inferencegateway.application.port.out.ModelCatalogRepository;
 import com.llmobservability.platform.inferencegateway.application.port.out.ProviderClient;
 import com.llmobservability.platform.inferencegateway.application.port.out.ProviderClientRegistry;
+import com.llmobservability.platform.inferencegateway.application.service.context.ContextOrchestrationResult;
+import com.llmobservability.platform.inferencegateway.application.service.context.ContextOrchestrator;
+import com.llmobservability.platform.inferencegateway.application.service.context.ContextProgressEvent;
 import com.llmobservability.platform.inferencegateway.config.InferenceGatewayProperties;
 import com.llmobservability.platform.inferencegateway.domain.model.Conversation;
 import com.llmobservability.platform.inferencegateway.domain.model.ConversationMessage;
@@ -85,6 +88,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
     private final ActiveStreamStateStore activeStreamStateStore;
     private final ProviderClientRegistry providerClientRegistry;
     private final LifecycleEventPublisher lifecycleEventPublisher;
+    private final ContextOrchestrator contextOrchestrator;
     private final ConversationTitlePolicy titlePolicy;
     private final InferenceGatewayProperties properties;
     private final MeterRegistry meterRegistry;
@@ -100,6 +104,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
             ActiveStreamStateStore activeStreamStateStore,
             ProviderClientRegistry providerClientRegistry,
             LifecycleEventPublisher lifecycleEventPublisher,
+            ContextOrchestrator contextOrchestrator,
             ConversationTitlePolicy titlePolicy,
             InferenceGatewayProperties properties,
             MeterRegistry meterRegistry
@@ -114,6 +119,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
         this.activeStreamStateStore = activeStreamStateStore;
         this.providerClientRegistry = providerClientRegistry;
         this.lifecycleEventPublisher = lifecycleEventPublisher;
+        this.contextOrchestrator = contextOrchestrator;
         this.titlePolicy = titlePolicy;
         this.properties = properties;
         this.meterRegistry = meterRegistry;
@@ -460,50 +466,55 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                 Mono.just(event(StreamEventType.REQUEST_ACCEPTED, request, sequence.incrementAndGet(), execution.traceId(), Map.of(
                         "status", InferenceStatus.ACCEPTED.name(),
                         "conversation", execution.conversationState()))),
-                providerClient.stream(toProviderRequest(request, execution))
-                        .flatMap(chunk -> activeStreamStateStore.cancellationRequested(request.id())
-                                .flatMap(cancelled -> {
-                                    if (Boolean.TRUE.equals(cancelled)) {
-                                        return Mono.error(new ApplicationException(
-                                                ErrorCode.STREAM_CANCELLED,
-                                                FailureStage.STREAMING,
-                                                "Inference stream was cancelled"));
-                                    }
-                                    return Mono.just(chunk);
-                                }))
-                        .concatMap(chunk -> {
-                            if (chunk.inputTokens() != null) {
-                                inputTokens.set(chunk.inputTokens());
-                            }
-                            if (chunk.outputTokens() != null) {
-                                outputTokens.set(chunk.outputTokens());
-                            }
-                            if (chunk.text() != null && !chunk.text().isBlank()) {
-                                assistantContent.append(chunk.text());
-                            }
+                contextOrchestrator.orchestrate(request, execution.providerMessages())
+                        .flatMapMany(context -> Flux.concat(
+                                Flux.fromIterable(context.progressEvents())
+                                        .map(progress -> contextEvent(progress, request, sequence.incrementAndGet(), execution.traceId())),
+                                providerClient.stream(toProviderRequest(request, execution.withProviderMessages(context.providerMessages())))
+                                        .flatMap(chunk -> activeStreamStateStore.cancellationRequested(request.id())
+                                                .flatMap(cancelled -> {
+                                                    if (Boolean.TRUE.equals(cancelled)) {
+                                                        return Mono.error(new ApplicationException(
+                                                                ErrorCode.STREAM_CANCELLED,
+                                                                FailureStage.STREAMING,
+                                                                "Inference stream was cancelled"));
+                                                    }
+                                                    return Mono.just(chunk);
+                                                }))
+                                        .concatMap(chunk -> {
+                                            if (chunk.inputTokens() != null) {
+                                                inputTokens.set(chunk.inputTokens());
+                                            }
+                                            if (chunk.outputTokens() != null) {
+                                                outputTokens.set(chunk.outputTokens());
+                                            }
+                                            if (chunk.text() != null && !chunk.text().isBlank()) {
+                                                assistantContent.append(chunk.text());
+                                            }
 
-                            Mono<Void> markStreaming = Mono.empty();
-                            if (firstTokenSeen.compareAndSet(false, true)) {
-                                markStreaming = inferenceRequestRepository.markStreaming(request.id(), Instant.now());
-                                Timer.builder("inference_first_token_latency_seconds")
-                                        .description("Time from accepted request to first provider token")
-                                        .tag("provider", request.providerKey())
-                                        .tag("model", request.modelKey())
-                                        .register(meterRegistry)
-                                        .record(java.time.Duration.between(request.createdAt(), Instant.now()));
-                            }
+                                            Mono<Void> markStreaming = Mono.empty();
+                                            if (firstTokenSeen.compareAndSet(false, true)) {
+                                                markStreaming = inferenceRequestRepository.markStreaming(request.id(), Instant.now());
+                                                Timer.builder("inference_first_token_latency_seconds")
+                                                        .description("Time from accepted request to first provider token")
+                                                        .tag("provider", request.providerKey())
+                                                        .tag("model", request.modelKey())
+                                                        .register(meterRegistry)
+                                                        .record(java.time.Duration.between(request.createdAt(), Instant.now()));
+                                            }
 
-                            StreamEventType eventType = chunk.text() == null || chunk.text().isBlank()
-                                    ? StreamEventType.USAGE_DELTA
-                                    : StreamEventType.TOKEN_DELTA;
-                            Map<String, Object> data = new LinkedHashMap<>();
-                            data.put("status", InferenceStatus.STREAMING.name());
-                            data.put("delta", chunk.text());
-                            data.put("inputTokens", inputTokens.get());
-                            data.put("outputTokens", outputTokens.get());
+                                            StreamEventType eventType = chunk.text() == null || chunk.text().isBlank()
+                                                    ? StreamEventType.USAGE_DELTA
+                                                    : StreamEventType.TOKEN_DELTA;
+                                            Map<String, Object> data = new LinkedHashMap<>();
+                                            data.put("status", InferenceStatus.STREAMING.name());
+                                            data.put("delta", chunk.text());
+                                            data.put("inputTokens", inputTokens.get());
+                                            data.put("outputTokens", outputTokens.get());
 
-                            return markStreaming.thenReturn(event(eventType, request, sequence.incrementAndGet(), execution.traceId(), data));
-                        }),
+                                            return markStreaming.thenReturn(event(eventType, request, sequence.incrementAndGet(), execution.traceId(), data));
+                                        })
+                        )),
                 Mono.defer(() -> completeRequest(request, assistantContent.toString(), inputTokens.get(), outputTokens.get(), sequence, execution.traceId()))
         );
 
@@ -809,6 +820,12 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                 data);
     }
 
+    private StreamEvent contextEvent(ContextProgressEvent progress, InferenceRequest request, long sequence, String traceId) {
+        Map<String, Object> data = new LinkedHashMap<>(progress.data());
+        data.putIfAbsent("status", "context");
+        return event(progress.type(), request, sequence, traceId, data);
+    }
+
     private InferenceStatusResult toStatusResult(InferenceRequest request, InferenceUsage usage, InferenceError error) {
         UsageSummary usageSummary = usage.inferenceRequestId() == null
                 ? null
@@ -1101,6 +1118,9 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
             List<StartInferenceCommand.Message> providerMessages,
             String conversationState
     ) {
+        StreamExecution withProviderMessages(List<StartInferenceCommand.Message> nextProviderMessages) {
+            return new StreamExecution(parameters, traceId, nextProviderMessages, conversationState);
+        }
     }
 
     private static final class CursorCodec {

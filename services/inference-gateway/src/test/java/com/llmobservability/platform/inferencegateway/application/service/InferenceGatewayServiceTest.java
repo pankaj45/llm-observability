@@ -15,10 +15,16 @@ import com.llmobservability.platform.inferencegateway.application.port.out.Infer
 import com.llmobservability.platform.inferencegateway.application.port.out.InferenceRequestRepository;
 import com.llmobservability.platform.inferencegateway.application.port.out.InferenceUsageRepository;
 import com.llmobservability.platform.inferencegateway.application.port.out.LifecycleEventPublisher;
+import com.llmobservability.platform.inferencegateway.application.port.out.ContextEvidenceCache;
+import com.llmobservability.platform.inferencegateway.application.port.out.ContextToolInvocationRepository;
 import com.llmobservability.platform.inferencegateway.application.port.out.ModelCatalogRepository;
 import com.llmobservability.platform.inferencegateway.application.port.out.ProviderClient;
 import com.llmobservability.platform.inferencegateway.application.port.out.ProviderClientRegistry;
+import com.llmobservability.platform.inferencegateway.config.ContextOrchestratorProperties;
 import com.llmobservability.platform.inferencegateway.config.InferenceGatewayProperties;
+import com.llmobservability.platform.inferencegateway.application.service.context.ContextOrchestrator;
+import com.llmobservability.platform.inferencegateway.application.service.context.RuntimeContextPolicy;
+import com.llmobservability.platform.inferencegateway.application.service.context.ToolNeedRouter;
 import com.llmobservability.platform.inferencegateway.domain.model.Conversation;
 import com.llmobservability.platform.inferencegateway.domain.model.ConversationStatus;
 import com.llmobservability.platform.inferencegateway.domain.model.ConversationMessage;
@@ -143,7 +149,12 @@ class InferenceGatewayServiceTest {
         assertThat(state.providerRequests).singleElement()
                 .satisfies(providerRequest -> assertThat(providerRequest.messages())
                         .extracting(ProviderClient.ProviderMessage::content)
-                        .containsExactly("Explain phase two", "done", "Can you give an example?"));
+                        .containsExactly(
+                                providerRequest.messages().get(0).content(),
+                                "Explain phase two",
+                                "done",
+                                "Can you give an example?"));
+        assertThat(state.providerRequests.getFirst().messages().getFirst().role()).isEqualTo("system");
     }
 
     @Test
@@ -348,8 +359,35 @@ class InferenceGatewayServiceTest {
                 state.activeStreamStateStore(),
                 state.providerClientRegistry(),
                 state.lifecycleEventPublisher(),
+                contextOrchestrator(),
                 new ConversationTitlePolicy(),
                 new InferenceGatewayProperties(Duration.ofHours(1), Duration.ofMinutes(10)),
+                new SimpleMeterRegistry());
+    }
+
+    private ContextOrchestrator contextOrchestrator() {
+        ContextOrchestratorProperties properties = new ContextOrchestratorProperties();
+        properties.setEnabled(false);
+        ContextEvidenceCache cache = new ContextEvidenceCache() {
+            @Override
+            public Mono<List<com.llmobservability.platform.inferencegateway.application.service.context.ContextEvidence>> get(String key) {
+                return Mono.just(List.of());
+            }
+
+            @Override
+            public Mono<Void> put(String key, List<com.llmobservability.platform.inferencegateway.application.service.context.ContextEvidence> evidence, Duration ttl) {
+                return Mono.empty();
+            }
+        };
+        ContextToolInvocationRepository ledger = invocation -> Mono.empty();
+        return new ContextOrchestrator(
+                new RuntimeContextPolicy(properties),
+                new ToolNeedRouter(),
+                query -> Mono.just(List.of()),
+                (query, maxResults) -> Mono.just(List.of()),
+                cache,
+                ledger,
+                properties,
                 new SimpleMeterRegistry());
     }
 

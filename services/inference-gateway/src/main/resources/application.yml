@@ -57,10 +57,24 @@ llm-observability:
   inference:
     stream-heartbeat: ${INFERENCE_STREAM_HEARTBEAT:PT15S}
     active-stream-ttl: ${INFERENCE_ACTIVE_STREAM_TTL:PT10M}
+  context:
+    enabled: ${CONTEXT_ORCHESTRATOR_ENABLED:true}
+    timezone: ${CONTEXT_TIMEZONE:Asia/Kolkata}
+    tool-timeout: ${CONTEXT_TOOL_TIMEOUT:PT5S}
+    market-data-cache-ttl: ${CONTEXT_MARKET_DATA_CACHE_TTL:PT60S}
+    web-search-cache-ttl: ${CONTEXT_WEB_SEARCH_CACHE_TTL:PT10M}
+    web-search-max-results: ${CONTEXT_WEB_SEARCH_MAX_RESULTS:5}
+    tavily:
+      enabled: ${TAVILY_ENABLED:true}
+      api-key: ${TAVILY_API_KEY:}
+      base-url: ${TAVILY_BASE_URL:https://api.tavily.com}
+    coin-gecko:
+      enabled: ${COINGECKO_ENABLED:true}
+      base-url: ${COINGECKO_BASE_URL:https://api.coingecko.com}
   gemini:
     api-key: ${GEMINI_API_KEY:}
     base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
-    default-model: ${GEMINI_DEFAULT_MODEL:gemini-1.5-flash}
+    default-model: ${GEMINI_DEFAULT_MODEL:gemini-2.5-flash}
   kafka:
     enabled: ${INFERENCE_KAFKA_ENABLED:false}
     lifecycle-topic: ${INFERENCE_LIFECYCLE_TOPIC:inference.lifecycle.v1}

@@ -45,6 +45,16 @@ interface ChatMessage {
   status: MessageStatus;
   tokenCount?: number;
   errorCode?: string;
+  toolStatus?: string;
+  sources?: ChatSource[];
+}
+
+interface ChatSource {
+  evidenceId: string;
+  title: string;
+  sourceName: string;
+  sourceUrl: string;
+  fetchedAt: string;
 }
 
 interface Conversation {
@@ -394,6 +404,49 @@ export default function ChatPage() {
             if (typeof data.outputTokens === "number") totalOutputTokens = data.outputTokens;
           }
 
+          if (event === "tool.plan" || event === "tool.started") {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgId
+                  ? { ...m, toolStatus: "Checking current sources..." }
+                  : m
+              )
+            );
+          }
+
+          if (event === "tool.failed") {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgId
+                  ? { ...m, toolStatus: "Current source check was unavailable." }
+                  : m
+              )
+            );
+          }
+
+          if (event === "source.available") {
+            const source: ChatSource = {
+              evidenceId: typeof data.evidenceId === "string" ? data.evidenceId : crypto.randomUUID(),
+              title: typeof data.title === "string" ? data.title : "Source",
+              sourceName: typeof data.sourceName === "string" ? data.sourceName : "Source",
+              sourceUrl: typeof data.sourceUrl === "string" ? data.sourceUrl : "",
+              fetchedAt: typeof data.fetchedAt === "string" ? data.fetchedAt : new Date().toISOString(),
+            };
+            if (source.sourceUrl) {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantMsgId
+                    ? {
+                        ...m,
+                        toolStatus: "Sources checked",
+                        sources: [...(m.sources ?? []).filter((item) => item.sourceUrl !== source.sourceUrl), source],
+                      }
+                    : m
+                )
+              );
+            }
+          }
+
           if (event === "request.completed") {
             const inputToks = typeof data.inputTokens === "number" ? data.inputTokens : 0;
             const outputToks = typeof data.outputTokens === "number" ? data.outputTokens : totalOutputTokens;
@@ -721,6 +774,30 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
           </ReactMarkdown>
         </div>
         {isStreaming && <span className={styles.streamingCursor} aria-hidden="true" />}
+        {!isUser && msg.toolStatus && (
+          <div className={styles.groundingStatus}>{msg.toolStatus}</div>
+        )}
+        {!isUser && msg.sources?.length ? (
+          <details className={styles.sourcePanel}>
+            <summary>
+              Sources checked · {msg.sources.length}
+            </summary>
+            <div className={styles.sourceList}>
+              {msg.sources.map((source) => (
+                <a
+                  key={source.evidenceId}
+                  className={styles.sourceLink}
+                  href={source.sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <span>{source.title}</span>
+                  <small>{source.sourceName} · {new Date(source.fetchedAt).toLocaleString()}</small>
+                </a>
+              ))}
+            </div>
+          </details>
+        ) : null}
         {(isCancelled || isFailed) && (
           <div className={styles.bubgeStatusRow}>
             {isCancelled && (

@@ -29,7 +29,8 @@ config:
   kafkaBootstrapServers: kafka:9092
   clickhouseHttpUrl: http://clickhouse:8123
   clickhouseDatabase: llm_observability
-  analyticsApiBase: http://analytics-query:8081
+  analyticsApiBase: /analytics/api
+  analyticsInternalApiBase: http://analytics-query:8081
   protectedContentRetentionDays: "30"
   analyticsFactRetentionDays: "90"
 

@@ -70,8 +70,9 @@ No backend changes are required. The chatbot uses the following existing endpoin
 | Cancel active stream | DELETE | `/v1/conversations/{id}/stream` |
 
 The inference gateway base URL is read from `NEXT_PUBLIC_INFERENCE_API_BASE` (default:
-`http://localhost:8080`). The analytics query base URL continues to be read from
-`NEXT_PUBLIC_ANALYTICS_API_BASE` (default: `http://localhost:8081`).
+`http://localhost:8080`). The analytics dashboard reads `NEXT_PUBLIC_ANALYTICS_API_BASE`
+(default: `/analytics/api`) and uses the web server's same-origin analytics proxy. The proxy
+forwards to `ANALYTICS_API_INTERNAL_BASE` (default: `http://localhost:8081`).
 
 ## SSE Event Wire Format
 

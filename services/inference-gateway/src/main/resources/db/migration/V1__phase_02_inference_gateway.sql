@@ -135,7 +135,7 @@ CREATE INDEX IF NOT EXISTS idx_inference_cancellation_request
     ON inference_cancellation (inference_request_id, created_at DESC);
 
 INSERT INTO llm_provider (provider_key, display_name, enabled, supports_streaming, supports_cancellation)
-VALUES ('gemini', 'Google Gemini', true, true, false)
+VALUES ('gemini', 'Google Gemini', true, true, true)
 ON CONFLICT (provider_key) DO UPDATE
 SET display_name = EXCLUDED.display_name,
     enabled = EXCLUDED.enabled,
@@ -148,8 +148,8 @@ SELECT provider.id, model.model_key, model.display_name, true, model.context_win
 FROM llm_provider provider
 CROSS JOIN (
     VALUES
-        ('gemini-1.5-flash', 'Gemini 1.5 Flash', 1048576, 8192),
-        ('gemini-1.5-pro', 'Gemini 1.5 Pro', 2097152, 8192)
+        ('gemini-2.5-flash', 'Gemini 2.5 Flash', 1048576, 65536),
+        ('gemini-3.1-flash-lite', 'Gemini 3.1 Flash Lite', 1048576, 65536)
 ) AS model(model_key, display_name, context_window_tokens, max_output_tokens)
 WHERE provider.provider_key = 'gemini'
 ON CONFLICT (provider_id, model_key) DO UPDATE

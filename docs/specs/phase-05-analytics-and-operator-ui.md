@@ -21,6 +21,7 @@ Status as of 2026-05-23: approved for implementation. Phase 5 builds on the Phas
 - Request search endpoint with filters, pagination, and stable opaque cursors.
 - Request detail endpoint for one request trace without raw content.
 - Next.js operator dashboard in `apps/web`.
+- Same-origin dashboard proxy in `apps/web` for forwarding browser analytics requests to `services/analytics-query`.
 - Focused controller, service, and query mapping tests.
 - Documentation updates for API contracts, sequence flows, README, local setup, and ADR index.
 
@@ -158,6 +159,7 @@ Cost fields are represented in API responses as `estimatedCostUsd`, but remain z
 - Query service traces include tenant, project, route, query window, and result count attributes with cardinality controls.
 - ClickHouse failures return deterministic error envelopes.
 - Dashboard handles loading, empty, error, and degraded states.
+- The dashboard calls analytics through `/analytics/api/*`; the web server forwards to the internal analytics-query base configured by `ANALYTICS_API_INTERNAL_BASE`.
 
 ## Acceptance Criteria
 

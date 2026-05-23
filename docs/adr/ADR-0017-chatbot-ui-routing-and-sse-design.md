@@ -24,6 +24,12 @@ The chatbot is added as a new page inside `apps/web` rather than a new applicati
 analytics dashboard is relocated from `/` to `/analytics`. A shared navigation bar in the
 root `layout.tsx` provides links between the two views.
 
+Dashboard API calls use a same-origin proxy under `/analytics/api/*`. The browser-visible
+base defaults to `/analytics/api`, while the Next.js server forwards to
+`ANALYTICS_API_INTERNAL_BASE`. This keeps Kubernetes and Docker service names out of browser
+requests while preserving the analytics-query service as the owner of the `/v1/analytics/*`
+contract.
+
 ### 2. Model selector; provider fixed to `gemini`
 
 The UI shows a model dropdown (`gemini-1.5-pro`, `gemini-1.5-flash`). The provider is always
@@ -109,8 +115,12 @@ match the analytics dashboard UX.
 
 - `apps/web/app/page.tsx` is replaced with the chatbot UI.
 - `apps/web/app/analytics/page.tsx` is created with the analytics dashboard content.
+- `apps/web/app/analytics/api/[...path]/route.ts` proxies dashboard API calls to the
+  analytics-query service.
 - `apps/web/app/layout.tsx` gains a shared navigation bar.
 - The chatbot requires `NEXT_PUBLIC_INFERENCE_API_BASE` (default: `http://localhost:8080`).
+- The analytics dashboard uses `NEXT_PUBLIC_ANALYTICS_API_BASE` (default: `/analytics/api`)
+  plus server-side `ANALYTICS_API_INTERNAL_BASE` for deployments.
 - Any future addition of a second provider requires updating the model dropdown and relaxing
   the `const: gemini` constraint in the OpenAPI contract and the backend validator.
 - Authentication work (Phase 6) must replace the hardcoded tenant/project with JWT-derived

@@ -100,6 +100,11 @@ SSE event types:
 - `request.completed`
 - `request.cancelled`
 - `request.failed`
+- `tool.plan`
+- `tool.started`
+- `tool.completed`
+- `tool.failed`
+- `source.available`
 - `heartbeat`
 
 SSE requirements:
@@ -108,6 +113,7 @@ SSE requirements:
 - Each event includes request id, conversation id, and trace id.
 - Clients may resume with an `after` cursor when supported.
 - Cancellation is best-effort if provider APIs do not guarantee cancellation.
+- Tool progress events are optional and may appear before model token events when live data grounding is enabled.
 
 ## Phase 2 Inference Gateway Contract Requirements
 

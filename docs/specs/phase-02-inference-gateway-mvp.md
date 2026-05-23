@@ -209,6 +209,11 @@ Event types:
 - `request.completed`
 - `request.cancelled`
 - `request.failed`
+- `tool.plan`
+- `tool.started`
+- `tool.completed`
+- `tool.failed`
+- `source.available`
 - `heartbeat`
 
 Rules:
@@ -217,6 +222,7 @@ Rules:
 - Heartbeats must be emitted during provider silence to keep intermediaries from closing the connection.
 - Client disconnect should stop downstream streaming work when possible.
 - Provider errors must be normalized into `request.failed`.
+- Tool progress events are optional and emitted only when context orchestration performs live grounding before provider generation.
 
 ## Event Schemas
 

@@ -18,5 +18,6 @@ data:
   CLICKHOUSE_HTTP_URL: {{ .Values.config.clickhouseHttpUrl | quote }}
   CLICKHOUSE_DATABASE: {{ .Values.config.clickhouseDatabase | quote }}
   NEXT_PUBLIC_ANALYTICS_API_BASE: {{ .Values.config.analyticsApiBase | quote }}
+  ANALYTICS_API_INTERNAL_BASE: {{ .Values.config.analyticsInternalApiBase | quote }}
   RETENTION_PROTECTED_CONTENT_DAYS: {{ default "30" .Values.config.protectedContentRetentionDays | quote }}
   RETENTION_ANALYTICS_FACT_DAYS: {{ default "90" .Values.config.analyticsFactRetentionDays | quote }}

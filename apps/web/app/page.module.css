@@ -213,6 +213,53 @@
   margin-top: 4px;
 }
 
+.groundingStatus {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--mantine-color-gray-6);
+}
+
+.sourcePanel {
+  margin-top: 8px;
+  border-top: 1px solid var(--mantine-color-gray-2);
+  padding-top: 8px;
+  font-size: 12px;
+}
+
+.sourcePanel summary {
+  cursor: pointer;
+  color: var(--mantine-color-gray-7);
+  font-weight: 600;
+}
+
+.sourceList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.sourceLink {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--mantine-color-blue-7);
+  text-decoration: none;
+  border: 1px solid var(--mantine-color-gray-2);
+  border-radius: 6px;
+  padding: 7px 8px;
+  background: var(--mantine-color-gray-0);
+}
+
+.sourceLink:hover {
+  text-decoration: underline;
+}
+
+.sourceLink small {
+  color: var(--mantine-color-gray-6);
+  font-size: 11px;
+}
+
 /* ──── Input bar ──── */
 .inputBar {
   border-top: 1px solid var(--mantine-color-gray-3);

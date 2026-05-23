@@ -8,6 +8,11 @@ public enum StreamEventType {
     REQUEST_COMPLETED("request.completed"),
     REQUEST_CANCELLED("request.cancelled"),
     REQUEST_FAILED("request.failed"),
+    TOOL_PLAN("tool.plan"),
+    TOOL_STARTED("tool.started"),
+    TOOL_COMPLETED("tool.completed"),
+    TOOL_FAILED("tool.failed"),
+    SOURCE_AVAILABLE("source.available"),
     HEARTBEAT("heartbeat");
 
     private final String wireName;
@@ -20,4 +25,3 @@ public enum StreamEventType {
         return wireName;
     }
 }
-

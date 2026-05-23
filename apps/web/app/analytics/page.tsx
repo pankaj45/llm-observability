@@ -130,22 +130,47 @@ type RequestDetail = RequestRow & {
   }>;
 };
 
-const apiBase = process.env.NEXT_PUBLIC_ANALYTICS_API_BASE ?? "http://localhost:8081";
+const apiBase = process.env.NEXT_PUBLIC_ANALYTICS_API_BASE ?? "/analytics/api";
 
-function isoDaysAgo(days: number) {
+function dateDaysAgo(days: number) {
   const date = new Date();
-  date.setUTCDate(date.getUTCDate() - days);
-  date.setUTCMinutes(0, 0, 0);
-  return date.toISOString();
+  date.setDate(date.getDate() - days);
+  date.setMinutes(0, 0, 0);
+  return date;
 }
 
-function toInputValue(value: string) {
-  return value.slice(0, 16);
+function padDatePart(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function toLocalInputValue(value: Date | string) {
+  const date = typeof value === "string" ? new Date(value) : value;
+  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
+  return [
+    safeDate.getFullYear(),
+    padDatePart(safeDate.getMonth() + 1),
+    padDatePart(safeDate.getDate())
+  ].join("-") + `T${padDatePart(safeDate.getHours())}:${padDatePart(safeDate.getMinutes())}`;
+}
+
+function toOffsetDateTime(date: Date) {
+  const offsetMinutes = -date.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absoluteOffset = Math.abs(offsetMinutes);
+  const offsetHours = Math.floor(absoluteOffset / 60);
+  const offsetRemainderMinutes = absoluteOffset % 60;
+  const localDateTime = [
+    date.getFullYear(),
+    padDatePart(date.getMonth() + 1),
+    padDatePart(date.getDate())
+  ].join("-") + `T${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}:${padDatePart(date.getSeconds())}`;
+
+  return `${localDateTime}${sign}${padDatePart(offsetHours)}:${padDatePart(offsetRemainderMinutes)}`;
 }
 
 function fromInputValue(value: string) {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+  return toOffsetDateTime(Number.isNaN(date.getTime()) ? new Date() : date);
 }
 
 function formatNumber(value: number) {
@@ -166,11 +191,31 @@ function statusColor(status: string) {
   return "indigo";
 }
 
+function analyticsUrl(path: string, params: URLSearchParams) {
+  return `${apiBase.replace(/\/$/, "")}${path}?${params.toString()}`;
+}
+
+async function errorMessage(response: Response, label: string) {
+  const fallback = `${label} failed with HTTP ${response.status}`;
+  try {
+    const body = (await response.json()) as { error?: { message?: string; code?: string } };
+    if (body.error?.message) {
+      return `${label} failed: ${body.error.message}`;
+    }
+    if (body.error?.code) {
+      return `${label} failed: ${body.error.code}`;
+    }
+  } catch {
+    // The response may be an HTML proxy error or an empty body.
+  }
+  return fallback;
+}
+
 export default function HomePage() {
   const [tenantId, setTenantId] = useState("tenant-a");
   const [projectId, setProjectId] = useState("project-a");
-  const [from, setFrom] = useState(toInputValue(isoDaysAgo(7)));
-  const [to, setTo] = useState(toInputValue(new Date().toISOString()));
+  const [from, setFrom] = useState(toLocalInputValue(dateDaysAgo(7)));
+  const [to, setTo] = useState(toLocalInputValue(new Date()));
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -218,11 +263,14 @@ export default function HomePage() {
     setError(null);
     try {
       const [summaryResponse, requestsResponse] = await Promise.all([
-        fetch(`${apiBase}/v1/analytics/inference/summary?${params.toString()}`, { headers: requestHeaders() }),
-        fetch(`${apiBase}/v1/analytics/inference/requests?${params.toString()}&limit=50`, { headers: requestHeaders() })
+        fetch(analyticsUrl("/v1/analytics/inference/summary", params), { headers: requestHeaders() }),
+        fetch(`${analyticsUrl("/v1/analytics/inference/requests", params)}&limit=50`, { headers: requestHeaders() })
       ]);
-      if (!summaryResponse.ok || !requestsResponse.ok) {
-        throw new Error("Analytics query failed");
+      if (!summaryResponse.ok) {
+        throw new Error(await errorMessage(summaryResponse, "Analytics summary query"));
+      }
+      if (!requestsResponse.ok) {
+        throw new Error(await errorMessage(requestsResponse, "Analytics request search"));
       }
       const nextSummary = (await summaryResponse.json()) as Summary;
       const requestPage = (await requestsResponse.json()) as { items: RequestRow[] };
@@ -243,7 +291,7 @@ export default function HomePage() {
   async function loadDetail(requestId: string) {
     setDetailLoading(true);
     try {
-      const response = await fetch(`${apiBase}/v1/analytics/inference/requests/${requestId}?${params.toString()}`, { headers: requestHeaders() });
+      const response = await fetch(analyticsUrl(`/v1/analytics/inference/requests/${requestId}`, params), { headers: requestHeaders() });
       if (!response.ok) {
         throw new Error("Request detail failed");
       }

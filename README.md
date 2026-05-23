@@ -18,6 +18,7 @@ make dev
 Open **http://localhost:3000** — the chatbot is ready. Open **http://localhost:3000/analytics** for the operator dashboard.
 
 > Kafka, PostgreSQL, Redis, ClickHouse, Prometheus, Grafana, and all services start via Docker Compose.
+> Compose also initializes the ClickHouse analytics schema used by `/analytics` and wires ClickHouse credentials into analytics services.
 
 ### Prerequisites
 
@@ -76,6 +77,10 @@ Open **http://localhost:3000** — the chatbot is ready. Open **http://localhost
 4. On completion, gateway persists the assistant message and publishes `inference.completed` to Kafka.
 5. `ingestion-worker` consumes the Kafka event and writes a lifecycle fact to ClickHouse.
 6. Operator dashboard queries `analytics-query` which reads from ClickHouse.
+
+The web app proxies dashboard API calls through its same-origin `/analytics/api/*` route. In
+container and Kubernetes deployments, `ANALYTICS_API_INTERNAL_BASE` points that proxy at the
+internal `analytics-query` service so browsers do not need to resolve cluster-only service names.
 
 ### Logging strategy
 
@@ -200,6 +205,12 @@ communicate directly; ClickHouse is the analytics read model.
 | OTel Collector gRPC | 4317 |
 | OTel Collector HTTP | 4318 |
 
+### Web API routing
+
+- Analytics dashboard browser calls default to `/analytics/api`.
+- The Next.js server forwards `/analytics/api/*` to `ANALYTICS_API_INTERNAL_BASE`, defaulting to `http://localhost:8081` for local development.
+- `NEXT_PUBLIC_ANALYTICS_API_BASE` can still override the browser-visible base when an environment provides its own public analytics route.
+
 ---
 
 ## Specification and Decision Records
@@ -209,6 +220,7 @@ communicate directly; ClickHouse is the analytics read model.
 - [Phase 04 — Conversation Continuity](docs/specs/phase-04-conversation-continuity.md)
 - [Phase 05 — Analytics and Operator UI](docs/specs/phase-05-analytics-and-operator-ui.md)
 - [Phase 07 — Chatbot UI](docs/specs/phase-07-chatbot-ui.md)
+- [Phase 08 — Context Orchestrator and Live Data Grounding](docs/specs/phase-08-context-orchestrator.md)
 - [Architecture Decision Records](docs/adr/README.md)
 - [API Contracts](docs/architecture/api-contracts.md)
 - [Event Schemas](docs/architecture/event-schemas.md)

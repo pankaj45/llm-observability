@@ -18,7 +18,7 @@ The analytics query service will expose three contract-first endpoints:
 
 All endpoints require tenant id, project id, and an explicit time window. Query windows are capped at 30 days. Request search uses opaque server-owned cursors, defaults to 50 items, and is capped at 200 items.
 
-The Next.js operator UI will consume these APIs directly and provide dashboard KPIs, time-series trends, provider/model/status/error breakdowns, request search, and request detail. Authentication remains deferred to Phase 6; Phase 5 preserves explicit tenant/project request parameters.
+The Next.js operator UI will consume these APIs through a same-origin web proxy and provide dashboard KPIs, time-series trends, provider/model/status/error breakdowns, request search, and request detail. The proxy only handles browser routing to the analytics-query service; `services/analytics-query` remains the contract owner for `/v1/analytics/*`. Authentication remains deferred to Phase 6; Phase 5 preserves explicit tenant/project request parameters.
 
 Cost is exposed as an API placeholder through `estimatedCostUsd`, but remains zero or null until provider pricing catalog and cost computation are implemented.
 
@@ -43,6 +43,7 @@ Cost is exposed as an API placeholder through `estimatedCostUsd`, but remains ze
 ## Consequences
 
 - `services/analytics-query` owns ClickHouse query composition and response mapping.
+- `apps/web` owns the same-origin dashboard proxy so browser clients do not depend on internal service DNS.
 - Analytics APIs must validate tenant/project scope, explicit time windows, maximum window length, filters, and pagination limits.
 - Analytics responses must not include raw prompts, completions, authorization headers, credentials, or provider secrets.
 - Dashboard code must handle loading, empty, error, and degraded states.

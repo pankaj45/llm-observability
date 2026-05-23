@@ -75,7 +75,7 @@ make down               # stop local dependencies
 - ClickHouse migrations should be explicit and reviewed with expected query patterns.
 - Phase 2 adds the inference gateway Flyway migration for provider/model, conversation, message, request, usage, error, and cancellation tables.
 - Phase 3 adds ingestion-worker Flyway migration state in a separate `ingestion_worker_flyway_schema_history` table to avoid checksum collisions with inference-gateway migrations sharing the same local PostgreSQL database.
-- Phase 3 ClickHouse schema is documented in `infra/migrations/clickhouse/V1__phase_03_inference_lifecycle_fact.sql`; apply it before enabling ClickHouse ingestion locally.
+- Docker Compose applies the Phase 3 ClickHouse schema from `infra/migrations/clickhouse/V1__phase_03_inference_lifecycle_fact.sql` through ClickHouse init scripts.
 - Phase 5 analytics query APIs read the same ClickHouse lifecycle fact table and require deterministic seed data before dashboard performance validation.
 - Seed data should be deterministic and safe to reset.
 - Local reset commands must never target production-like connection strings.
@@ -98,7 +98,9 @@ make down               # stop local dependencies
 ## Phase 5 Analytics Query and Dashboard
 
 - Docker Compose wires the analytics query service to ClickHouse through `CLICKHOUSE_HTTP_URL`.
-- The operator dashboard reads `NEXT_PUBLIC_ANALYTICS_API_BASE`, defaulting to `http://localhost:8081`.
+- Docker Compose configures ClickHouse with `CLICKHOUSE_USERNAME` and `CLICKHOUSE_PASSWORD`, defaulting locally to `default` / `password`, and passes the same credentials to analytics-query and ingestion-worker.
+- The operator dashboard reads `NEXT_PUBLIC_ANALYTICS_API_BASE`, defaulting to the same-origin `/analytics/api` proxy.
+- The web proxy forwards `/analytics/api/*` to `ANALYTICS_API_INTERNAL_BASE`, defaulting to `http://localhost:8081`; Docker Compose points it at `http://analytics-query:8081`.
 - Analytics APIs require `tenantId`, `projectId`, `from`, and `to`.
 - Analytics responses exclude raw prompt and completion content.
 - Live ClickHouse query validation and seeded load testing are deferred until explicitly requested.
