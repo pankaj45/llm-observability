@@ -18,6 +18,8 @@ import com.llmobservability.platform.inferencegateway.application.port.out.Lifec
 import com.llmobservability.platform.inferencegateway.application.port.out.ContextEvidenceCache;
 import com.llmobservability.platform.inferencegateway.application.port.out.ContextToolInvocationRepository;
 import com.llmobservability.platform.inferencegateway.application.port.out.ModelCatalogRepository;
+import com.llmobservability.platform.inferencegateway.application.port.out.PiiRedactionPort;
+import com.llmobservability.platform.inferencegateway.application.port.out.PiiRedactionResult;
 import com.llmobservability.platform.inferencegateway.application.port.out.ProviderClient;
 import com.llmobservability.platform.inferencegateway.application.port.out.ProviderClientRegistry;
 import com.llmobservability.platform.inferencegateway.config.ContextOrchestratorProperties;
@@ -360,6 +362,7 @@ class InferenceGatewayServiceTest {
                 state.providerClientRegistry(),
                 state.lifecycleEventPublisher(),
                 contextOrchestrator(),
+                noOpRedaction(),
                 new ConversationTitlePolicy(),
                 new InferenceGatewayProperties(Duration.ofHours(1), Duration.ofMinutes(10)),
                 new SimpleMeterRegistry());
@@ -391,7 +394,66 @@ class InferenceGatewayServiceTest {
                 new SimpleMeterRegistry());
     }
 
+    /** No-op PiiRedactionPort — returns content unchanged, no categories detected. */
+    private PiiRedactionPort noOpRedaction() {
+        return content -> new PiiRedactionResult(content, List.of());
+    }
+
+    @Test
+    void piiRedactionRedactsUserMessageBeforePersistenceAndProviderContext() {
+        TestState state = new TestState();
+        // Wire a redaction port that replaces emails with [EMAIL]
+        PiiRedactionPort emailRedactor = content ->
+                content.contains("@")
+                        ? new PiiRedactionResult(content.replaceAll("[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}", "[EMAIL]"), List.of("EMAIL"))
+                        : new PiiRedactionResult(content, List.of());
+
+        InferenceGatewayService service = new InferenceGatewayService(
+                state.conversationRepository(),
+                state.conversationMessageRepository(),
+                state.inferenceRequestRepository(),
+                state.inferenceUsageRepository(),
+                state.inferenceErrorRepository(),
+                state.inferenceCancellationRepository(),
+                state.modelCatalogRepository(),
+                state.activeStreamStateStore(),
+                state.providerClientRegistry(),
+                state.lifecycleEventPublisher(),
+                contextOrchestrator(),
+                emailRedactor,
+                new ConversationTitlePolicy(),
+                new InferenceGatewayProperties(Duration.ofHours(1), Duration.ofMinutes(10)),
+                new SimpleMeterRegistry());
+
+        StartInferenceCommand cmd = new StartInferenceCommand(
+                "tenant-a", "project-a", "gemini", "gemini-1.5-flash",
+                List.of(new StartInferenceCommand.Message(MessageRole.USER, "Email me at secret@private.com")),
+                Map.of(), Map.of(), "client-pii", Map.of(), "pii-test-1", "trace-pii");
+
+        service.stream(cmd).collectList().block();
+
+        // The persisted user message must use the redacted content
+        ConversationMessage userMessage = state.messages.stream()
+                .filter(m -> m.role() == MessageRole.USER)
+                .findFirst()
+                .orElseThrow();
+        assertThat(userMessage.content()).isEqualTo("Email me at [EMAIL]");
+        assertThat(userMessage.redactionState()).isEqualTo(RedactionState.REDACTED);
+        assertThat(userMessage.metadata()).containsKey("redactedCategories");
+        assertThat(userMessage.metadata().get("redactedCategories")).contains("EMAIL");
+
+        // The provider must have received the redacted content, not the raw email
+        assertThat(state.providerRequests).hasSize(1);
+        assertThat(state.providerRequests.getFirst().messages())
+                .extracting(ProviderClient.ProviderMessage::content)
+                .noneMatch(content -> content.contains("secret@private.com"));
+        assertThat(state.providerRequests.getFirst().messages())
+                .extracting(ProviderClient.ProviderMessage::content)
+                .anyMatch(content -> content.contains("[EMAIL]"));
+    }
+
     private StartInferenceCommand command(String idempotencyKey) {
+
         return new StartInferenceCommand(
                 "tenant-a",
                 "project-a",

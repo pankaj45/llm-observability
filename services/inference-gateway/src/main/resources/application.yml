@@ -57,6 +57,9 @@ llm-observability:
   inference:
     stream-heartbeat: ${INFERENCE_STREAM_HEARTBEAT:PT15S}
     active-stream-ttl: ${INFERENCE_ACTIVE_STREAM_TTL:PT10M}
+  redaction:
+    enabled: ${PII_REDACTION_ENABLED:true}
+    categories: ${PII_REDACTION_CATEGORIES:EMAIL,PHONE,CREDIT_CARD,SSN,IP_ADDRESS,AADHAAR}
   context:
     enabled: ${CONTEXT_ORCHESTRATOR_ENABLED:true}
     timezone: ${CONTEXT_TIMEZONE:Asia/Kolkata}

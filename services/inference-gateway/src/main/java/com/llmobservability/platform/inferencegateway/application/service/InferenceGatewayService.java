@@ -28,6 +28,8 @@ import com.llmobservability.platform.inferencegateway.application.port.out.Infer
 import com.llmobservability.platform.inferencegateway.application.port.out.InferenceUsageRepository;
 import com.llmobservability.platform.inferencegateway.application.port.out.LifecycleEventPublisher;
 import com.llmobservability.platform.inferencegateway.application.port.out.ModelCatalogRepository;
+import com.llmobservability.platform.inferencegateway.application.port.out.PiiRedactionPort;
+import com.llmobservability.platform.inferencegateway.application.port.out.PiiRedactionResult;
 import com.llmobservability.platform.inferencegateway.application.port.out.ProviderClient;
 import com.llmobservability.platform.inferencegateway.application.port.out.ProviderClientRegistry;
 import com.llmobservability.platform.inferencegateway.application.service.context.ContextOrchestrationResult;
@@ -53,6 +55,8 @@ import com.llmobservability.platform.inferencegateway.application.port.in.ModelC
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -77,6 +81,7 @@ import java.util.function.Function;
 public class InferenceGatewayService implements InferenceGatewayUseCase {
     private static final int DEFAULT_PAGE_LIMIT = 50;
     private static final int MAX_PAGE_LIMIT = 200;
+    private static final Logger log = LoggerFactory.getLogger(InferenceGatewayService.class);
 
     private final ConversationRepository conversationRepository;
     private final ConversationMessageRepository conversationMessageRepository;
@@ -89,6 +94,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
     private final ProviderClientRegistry providerClientRegistry;
     private final LifecycleEventPublisher lifecycleEventPublisher;
     private final ContextOrchestrator contextOrchestrator;
+    private final PiiRedactionPort piiRedactionPort;
     private final ConversationTitlePolicy titlePolicy;
     private final InferenceGatewayProperties properties;
     private final MeterRegistry meterRegistry;
@@ -105,6 +111,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
             ProviderClientRegistry providerClientRegistry,
             LifecycleEventPublisher lifecycleEventPublisher,
             ContextOrchestrator contextOrchestrator,
+            PiiRedactionPort piiRedactionPort,
             ConversationTitlePolicy titlePolicy,
             InferenceGatewayProperties properties,
             MeterRegistry meterRegistry
@@ -120,6 +127,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
         this.providerClientRegistry = providerClientRegistry;
         this.lifecycleEventPublisher = lifecycleEventPublisher;
         this.contextOrchestrator = contextOrchestrator;
+        this.piiRedactionPort = piiRedactionPort;
         this.titlePolicy = titlePolicy;
         this.properties = properties;
         this.meterRegistry = meterRegistry;
@@ -134,7 +142,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                                 ErrorCode.VALIDATION_INVALID_REQUEST,
                                 FailureStage.VALIDATION,
                                 "idempotencyKey has already been used for request " + existing.id())))
-                        .switchIfEmpty(Mono.defer(() -> prepareStream(command)).flatMapMany(prepared -> streamPrepared(prepared, execution(command)))))
+                        .switchIfEmpty(Mono.defer(() -> prepareStream(command)).flatMapMany(prepared -> streamPrepared(prepared, execution(command, prepared.redactedMessages())))))
                 .doFinally(signalType -> sample.stop(Timer.builder("inference_request_duration_seconds")
                         .description("Inference stream lifecycle duration")
                         .tag("provider", command.provider())
@@ -372,14 +380,17 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                         ErrorCode.PROVIDER_UNSUPPORTED,
                         FailureStage.VALIDATION,
                         "Model is not enabled for provider")))
-                .flatMap(model -> conversationRepository.save(conversation)
-                        .then(conversationMessageRepository.saveAll(toConversationMessages(command, conversationId, now)))
-                        .then(Mono.just(createRequest(command, requestId, conversationId, model, redisStreamKey, now)))
-                        .flatMap(inferenceRequestRepository::save)
-                        .flatMap(request -> activeStreamStateStore.register(request.id(), request.conversationId(), properties.activeStreamTtl())
-                                .then(publish("inference.requested", request, command.traceId(), requestedPayload(request)))
-                                .then(providerClientRegistry.get(command.provider()))
-                                .map(providerClient -> PreparedStream.create(request, model, providerClient))));
+                .flatMap(model -> {
+                    List<ConversationMessage> redactedMessages = toConversationMessages(command, conversationId, now);
+                    return conversationRepository.save(conversation)
+                            .then(conversationMessageRepository.saveAll(redactedMessages))
+                            .then(Mono.just(createRequest(command, requestId, conversationId, model, redisStreamKey, now)))
+                            .flatMap(inferenceRequestRepository::save)
+                            .flatMap(request -> activeStreamStateStore.register(request.id(), request.conversationId(), properties.activeStreamTtl())
+                                    .then(publish("inference.requested", request, command.traceId(), requestedPayload(request)))
+                                    .then(providerClientRegistry.get(command.provider()))
+                                    .map(providerClient -> PreparedStream.create(request, model, providerClient, redactedMessages)));
+                });
     }
 
     private Mono<PreparedContinuation> prepareContinuation(ContinueConversationCommand command) {
@@ -435,7 +446,9 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
         providerMessages.addAll(orderedExistingMessages.stream()
                 .map(message -> new StartInferenceCommand.Message(message.role(), message.content()))
                 .toList());
-        providerMessages.addAll(command.messages());
+        providerMessages.addAll(newMessages.stream()
+                .map(message -> new StartInferenceCommand.Message(message.role(), message.content()))
+                .toList());
 
         return modelCatalogRepository.findEnabledModel(command.provider(), command.model())
                 .switchIfEmpty(Mono.error(new ApplicationException(
@@ -449,7 +462,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                                 .then(publish("inference.requested", request, command.traceId(), requestedPayload(request)))
                                 .then(providerClientRegistry.get(command.provider()))
                                 .map(providerClient -> new PreparedContinuation(
-                                        PreparedStream.create(request, model, providerClient),
+                                        PreparedStream.create(request, model, providerClient, newMessages),
                                         execution(command, providerMessages)))));
     }
 
@@ -732,17 +745,32 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
         List<ConversationMessage> messages = new ArrayList<>();
         for (int i = 0; i < command.messages().size(); i++) {
             StartInferenceCommand.Message message = command.messages().get(i);
-            messages.add(new ConversationMessage(
-                    UUID.randomUUID(),
-                    conversationId,
-                    message.role(),
-                    i,
-                    message.content(),
-                    ContentHasher.sha256(message.content()),
-                    estimateTokens(message.content()),
-                    RedactionState.NONE,
-                    Map.of("source", "request"),
-                    now));
+            if (message.role() == MessageRole.USER) {
+                RedactedMessage redacted = redactUserMessage(message.content(), conversationId, i);
+                messages.add(new ConversationMessage(
+                        UUID.randomUUID(),
+                        conversationId,
+                        message.role(),
+                        i,
+                        redacted.content(),
+                        ContentHasher.sha256(redacted.content()),
+                        estimateTokens(redacted.content()),
+                        redacted.state(),
+                        redacted.metadata(),
+                        now));
+            } else {
+                messages.add(new ConversationMessage(
+                        UUID.randomUUID(),
+                        conversationId,
+                        message.role(),
+                        i,
+                        message.content(),
+                        ContentHasher.sha256(message.content()),
+                        estimateTokens(message.content()),
+                        RedactionState.NONE,
+                        Map.of("source", "request"),
+                        now));
+            }
         }
         return messages;
     }
@@ -751,20 +779,79 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
         List<ConversationMessage> messages = new ArrayList<>();
         for (int i = 0; i < command.messages().size(); i++) {
             StartInferenceCommand.Message message = command.messages().get(i);
-            messages.add(new ConversationMessage(
-                    UUID.randomUUID(),
-                    command.conversationId(),
-                    message.role(),
-                    startingSequence + i,
-                    message.content(),
-                    ContentHasher.sha256(message.content()),
-                    estimateTokens(message.content()),
-                    RedactionState.NONE,
-                    Map.of("source", "request"),
-                    now));
+            if (message.role() == MessageRole.USER) {
+                RedactedMessage redacted = redactUserMessage(message.content(), command.conversationId(), startingSequence + i);
+                messages.add(new ConversationMessage(
+                        UUID.randomUUID(),
+                        command.conversationId(),
+                        message.role(),
+                        startingSequence + i,
+                        redacted.content(),
+                        ContentHasher.sha256(redacted.content()),
+                        estimateTokens(redacted.content()),
+                        redacted.state(),
+                        redacted.metadata(),
+                        now));
+            } else {
+                messages.add(new ConversationMessage(
+                        UUID.randomUUID(),
+                        command.conversationId(),
+                        message.role(),
+                        startingSequence + i,
+                        message.content(),
+                        ContentHasher.sha256(message.content()),
+                        estimateTokens(message.content()),
+                        RedactionState.NONE,
+                        Map.of("source", "request"),
+                        now));
+            }
         }
         return messages;
     }
+
+    /**
+     * Scans a user message for PII and returns the (possibly redacted) content,
+     * the appropriate {@link RedactionState}, and metadata.
+     *
+     * <p>If the redaction adapter throws, the error is logged and the original
+     * content is returned unchanged with {@code RedactionState.NONE} so that
+     * inference is never blocked by a redaction failure.
+     *
+     * <p>Raw matched values are never logged.
+     */
+    private RedactedMessage redactUserMessage(String content, UUID conversationId, int sequence) {
+        try {
+            Timer.Sample sample = Timer.start(meterRegistry);
+            PiiRedactionResult result = piiRedactionPort.scan(content);
+            sample.stop(Timer.builder("pii_redaction_latency_seconds")
+                    .description("Time taken to scan a user message for PII")
+                    .register(meterRegistry));
+
+            if (result.hasRedactions()) {
+                for (String category : result.detectedCategories()) {
+                    Counter.builder("pii_redaction_triggered_total")
+                            .description("Number of user messages where PII was detected and redacted")
+                            .tag("category", category)
+                            .register(meterRegistry)
+                            .increment();
+                }
+                log.info("audit.pii.redacted conversationId={} sequence={} categories={}",
+                        conversationId, sequence, result.detectedCategories());
+
+                Map<String, String> metadata = new LinkedHashMap<>();
+                metadata.put("source", "request");
+                metadata.put("redactedCategories", result.detectedCategories().toString());
+                return new RedactedMessage(result.redactedContent(), RedactionState.REDACTED, Map.copyOf(metadata));
+            }
+        } catch (Exception ex) {
+            log.error("pii.redaction.error conversationId={} sequence={} error={}",
+                    conversationId, sequence, ex.getMessage());
+        }
+        return new RedactedMessage(content, RedactionState.NONE, Map.of("source", "request"));
+    }
+
+    /** Value type holding the outcome of a per-message redaction pass. */
+    private record RedactedMessage(String content, RedactionState state, Map<String, String> metadata) {}
 
     private ProviderClient.ProviderRequest toProviderRequest(InferenceRequest request, StreamExecution execution) {
         List<ProviderClient.ProviderMessage> messages = execution.providerMessages().stream()
@@ -773,8 +860,11 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
         return new ProviderClient.ProviderRequest(request.id(), request.modelKey(), messages, execution.parameters());
     }
 
-    private StreamExecution execution(StartInferenceCommand command) {
-        return new StreamExecution(command.parameters(), command.traceId(), command.messages(), "created");
+    private StreamExecution execution(StartInferenceCommand command, List<ConversationMessage> redactedMessages) {
+        List<StartInferenceCommand.Message> providerMessages = redactedMessages.stream()
+                .map(m -> new StartInferenceCommand.Message(m.role(), m.content()))
+                .toList();
+        return new StreamExecution(command.parameters(), command.traceId(), providerMessages, "created");
     }
 
     private StreamExecution execution(ContinueConversationCommand command, List<StartInferenceCommand.Message> providerMessages) {
@@ -1103,9 +1193,9 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
         return Math.max(1, (int) Math.ceil(content.length() / 4.0));
     }
 
-    private record PreparedStream(InferenceRequest request, ModelCatalogEntry model, ProviderClient providerClient) {
-        private static PreparedStream create(InferenceRequest request, ModelCatalogEntry model, ProviderClient providerClient) {
-            return new PreparedStream(request, model, providerClient);
+    private record PreparedStream(InferenceRequest request, ModelCatalogEntry model, ProviderClient providerClient, List<ConversationMessage> redactedMessages) {
+        private static PreparedStream create(InferenceRequest request, ModelCatalogEntry model, ProviderClient providerClient, List<ConversationMessage> redactedMessages) {
+            return new PreparedStream(request, model, providerClient, redactedMessages);
         }
     }
 
