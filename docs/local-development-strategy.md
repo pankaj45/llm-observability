@@ -76,6 +76,7 @@ make down               # stop local dependencies
 - Phase 2 adds the inference gateway Flyway migration for provider/model, conversation, message, request, usage, error, and cancellation tables.
 - Phase 3 adds ingestion-worker Flyway migration state in a separate `ingestion_worker_flyway_schema_history` table to avoid checksum collisions with inference-gateway migrations sharing the same local PostgreSQL database.
 - Phase 3 ClickHouse schema is documented in `infra/migrations/clickhouse/V1__phase_03_inference_lifecycle_fact.sql`; apply it before enabling ClickHouse ingestion locally.
+- Phase 5 analytics query APIs read the same ClickHouse lifecycle fact table and require deterministic seed data before dashboard performance validation.
 - Seed data should be deterministic and safe to reset.
 - Local reset commands must never target production-like connection strings.
 
@@ -93,6 +94,14 @@ make down               # stop local dependencies
 - Docker Compose enables ClickHouse lifecycle fact writes with `INGESTION_CLICKHOUSE_ENABLED=true`.
 - The worker consumes `inference.lifecycle.v1`, records dedupe/processing state in PostgreSQL, and writes analytics facts to ClickHouse.
 - Container-backed Kafka/PostgreSQL/ClickHouse integration tests are deferred until explicitly requested.
+
+## Phase 5 Analytics Query and Dashboard
+
+- Docker Compose wires the analytics query service to ClickHouse through `CLICKHOUSE_HTTP_URL`.
+- The operator dashboard reads `NEXT_PUBLIC_ANALYTICS_API_BASE`, defaulting to `http://localhost:8081`.
+- Analytics APIs require `tenantId`, `projectId`, `from`, and `to`.
+- Analytics responses exclude raw prompt and completion content.
+- Live ClickHouse query validation and seeded load testing are deferred until explicitly requested.
 
 ## Developer Observability
 

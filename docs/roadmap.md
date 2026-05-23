@@ -244,6 +244,10 @@ Status as of 2026-05-23: implemented in `services/inference-gateway` with conver
 
 ## Phase 5: Analytics and Operator UI
 
+Detailed phase spec: [Phase 05: Analytics and Operator UI](specs/phase-05-analytics-and-operator-ui.md).
+
+Status as of 2026-05-23: approved for implementation with ClickHouse-backed analytics query APIs and a Next.js operator dashboard. Live container-backed analytics validation remains deferred until explicitly requested.
+
 ### Goals
 
 - Provide operator-facing visibility into requests, latency, cost, error rates, providers, models, and conversation traces.

@@ -148,6 +148,28 @@ Required continuity behavior:
 - Concurrent active continuation streams for the same conversation are rejected.
 - Phase 4 does not publish new `conversation.*` Kafka events.
 
+## Phase 5 Analytics Query Contract Requirements
+
+Phase 5 expands `libs/contracts/openapi/analytics-query.v1.yaml` for operator analytics.
+
+Required endpoints:
+
+| API | Method | Path | Required in Phase 5 |
+| --- | --- | --- | --- |
+| Analytics summary | GET | `/v1/analytics/inference/summary` | Yes |
+| Analytics requests | GET | `/v1/analytics/inference/requests` | Yes |
+| Analytics request detail | GET | `/v1/analytics/inference/requests/{requestId}` | Yes |
+
+Required analytics behavior:
+
+- All endpoints require `tenantId`, `projectId`, `from`, and `to`.
+- Query windows are capped at 30 days.
+- Optional filters include provider, model, status, and error code where applicable.
+- Request search defaults to 50 items and is capped at 200 items.
+- Public cursors are opaque server-owned strings.
+- Analytics APIs read ClickHouse lifecycle facts and do not return raw prompt/completion content.
+- Cost fields are placeholders until provider pricing and cost computation are implemented.
+
 ## Validation Requirements
 
 - Provider and model must be supported for the tenant/project.

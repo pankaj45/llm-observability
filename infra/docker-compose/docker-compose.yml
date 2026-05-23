@@ -123,10 +123,13 @@ services:
       SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/llm_observability
       SPRING_R2DBC_USERNAME: llm_observability
       SPRING_R2DBC_PASSWORD: llm_observability
+      CLICKHOUSE_HTTP_URL: http://clickhouse:8123
+      CLICKHOUSE_DATABASE: llm_observability
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
     ports:
       - "8081:8081"
     depends_on:
+      - clickhouse
       - otel-collector
 
   ingestion-worker:

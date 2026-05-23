@@ -34,7 +34,17 @@ management:
 
 info:
   service: analytics-query
-  phase: platform-bootstrap
+  phase: analytics-and-operator-ui
+
+llm-observability:
+  analytics:
+    clickhouse:
+      enabled: ${ANALYTICS_CLICKHOUSE_ENABLED:true}
+      base-url: ${CLICKHOUSE_HTTP_URL:http://localhost:8123}
+      username: ${CLICKHOUSE_USERNAME:default}
+      password: ${CLICKHOUSE_PASSWORD:}
+      database: ${CLICKHOUSE_DATABASE:llm_observability}
+      lifecycle-table: ${CLICKHOUSE_LIFECYCLE_TABLE:inference_lifecycle_fact}
 
 logging:
   pattern:

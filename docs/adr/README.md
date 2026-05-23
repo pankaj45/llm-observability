@@ -18,6 +18,7 @@ ADRs capture major decisions that affect architecture, operations, data contract
 - [ADR-0012: Phase 2 Gemini, Conversation Content, and Redis Decisions](ADR-0012-phase-02-gemini-conversation-content-and-redis.md)
 - [ADR-0013: Phase 3 Ingestion Pipeline Ownership](ADR-0013-phase-03-ingestion-pipeline-ownership.md)
 - [ADR-0014: Phase 4 Conversation Continuity](ADR-0014-phase-04-conversation-continuity.md)
+- [ADR-0015: Phase 5 Analytics Query and Operator UI](ADR-0015-phase-05-analytics-query-and-operator-ui.md)
 
 ## Required ADR Format
 

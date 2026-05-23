@@ -178,6 +178,29 @@ sequenceDiagram
     Web-->>Browser: Render charts and tables
 ```
 
+## Phase 5 Request Drilldown
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Browser
+    participant Web as Next.js Web App
+    participant Analytics as Analytics Query Service
+    participant CH as ClickHouse
+    participant Gateway as Inference Gateway
+
+    Browser->>Web: Select request row
+    Web->>Analytics: GET /v1/analytics/inference/requests/{requestId}
+    Analytics->>Analytics: Validate tenant/project/window
+    Analytics->>CH: Aggregate lifecycle facts for request
+    CH-->>Analytics: Request trace without raw content
+    Analytics-->>Web: Request detail with conversationId
+    opt Operator opens conversation context
+        Web->>Gateway: GET /v1/conversations/{conversationId}
+        Gateway-->>Web: Conversation metadata
+    end
+```
+
 ## Provider Failure
 
 ```mermaid

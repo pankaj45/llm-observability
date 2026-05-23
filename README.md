@@ -2,7 +2,7 @@
 
 Production-grade AI observability and inference logging platform for multi-provider LLM applications.
 
-Current status: phase 4 conversation continuity implementation. The repository now contains the WebFlux streaming inference API, Gemini provider adapter, PostgreSQL Flyway schema, Redis cancellation and active replay coordination, Kafka lifecycle publisher, ingestion-worker lifecycle consumer pipeline, ClickHouse lifecycle fact schema, conversation metadata/message/timeline APIs, contract validation, and focused service/controller/ingestion tests. Docker image validation and live container-backed integration testing are deferred until explicitly requested.
+Current status: phase 5 analytics and operator UI implementation. The repository now contains the WebFlux streaming inference API, Gemini provider adapter, PostgreSQL Flyway schema, Redis cancellation and active replay coordination, Kafka lifecycle publisher, ingestion-worker lifecycle consumer pipeline, ClickHouse lifecycle fact schema, conversation metadata/message/timeline APIs, analytics query APIs, an operator dashboard, contract validation, and focused service/controller/ingestion tests. Docker image validation and live container-backed integration testing are deferred until explicitly requested.
 
 ## Specification Baseline
 
@@ -22,6 +22,7 @@ Current status: phase 4 conversation continuity implementation. The repository n
 - [Phase 02 specification](docs/specs/phase-02-inference-gateway-mvp.md)
 - [Phase 03 specification](docs/specs/phase-03-inference-logging-pipeline.md)
 - [Phase 04 specification](docs/specs/phase-04-conversation-continuity.md)
+- [Phase 05 specification](docs/specs/phase-05-analytics-and-operator-ui.md)
 - [ADR index](docs/adr/README.md)
 
 ## Target Stack
@@ -67,7 +68,7 @@ Every major technical decision must create or update an ADR in `docs/adr`.
 
 ## Repository Status
 
-This repository currently contains phase 4 inference gateway, conversation continuity, and ingestion-worker code and documentation. Analytics query APIs, conversation summaries and context-window optimization, authentication, and UI workflows remain future phases.
+This repository currently contains phase 5 inference gateway, conversation continuity, ingestion-worker, analytics query, and operator dashboard code and documentation. Conversation summaries and context-window optimization, authentication, and production hardening remain future phases.
 
 ## Local Development
 
@@ -97,3 +98,10 @@ Phase 3 local notes:
 - `services/ingestion-worker` consumes `inference.lifecycle.v1` when `INGESTION_KAFKA_ENABLED=true`.
 - ClickHouse lifecycle fact writes are enabled with `INGESTION_CLICKHOUSE_ENABLED=true` and require `llm_observability.inference_lifecycle_fact` from `infra/migrations/clickhouse`.
 - Run `mvn -pl services/ingestion-worker test` for the ingestion-worker test suite.
+
+Phase 5 local notes:
+
+- `services/analytics-query` reads ClickHouse lifecycle facts from `llm_observability.inference_lifecycle_fact`.
+- Analytics APIs require `tenantId`, `projectId`, `from`, and `to`; query windows are capped at 30 days.
+- Analytics responses exclude raw prompt and completion content.
+- Run `mvn -pl services/analytics-query test` for the analytics query test suite.

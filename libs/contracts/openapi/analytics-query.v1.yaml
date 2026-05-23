@@ -2,16 +2,621 @@ openapi: 3.1.0
 info:
   title: Analytics Query API
   version: 1.0.0
-  description: Phase 1 contract inventory for inference analytics APIs.
+  description: Phase 5 contract for ClickHouse-backed inference analytics and operator dashboards.
 servers:
   - url: http://localhost:8081
+tags:
+  - name: analytics
 paths:
   /v1/analytics/inference/summary:
     get:
-      summary: Read inference analytics summary
+      summary: Read scoped inference dashboard summary
       operationId: getInferenceSummary
       tags:
         - analytics
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Provider"
+        - $ref: "#/components/parameters/Model"
+        - $ref: "#/components/parameters/Status"
       responses:
-        "501":
-          description: Not implemented during phase 1 platform bootstrap
+        "200":
+          description: Dashboard summary response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InferenceSummaryResponse"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/analytics/inference/requests:
+    get:
+      summary: Search inference requests
+      operationId: searchInferenceRequests
+      tags:
+        - analytics
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Provider"
+        - $ref: "#/components/parameters/Model"
+        - $ref: "#/components/parameters/Status"
+        - $ref: "#/components/parameters/ErrorCode"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Paged inference request search response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InferenceRequestSearchResponse"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/analytics/inference/requests/{requestId}:
+    get:
+      summary: Inspect one inference request trace
+      operationId: getInferenceRequestDetail
+      tags:
+        - analytics
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+      responses:
+        "200":
+          description: Request trace response without raw prompt or completion content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InferenceRequestDetailResponse"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+components:
+  parameters:
+    TenantId:
+      name: tenantId
+      in: query
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    ProjectId:
+      name: projectId
+      in: query
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    From:
+      name: from
+      in: query
+      required: true
+      schema:
+        type: string
+        format: date-time
+    To:
+      name: to
+      in: query
+      required: true
+      schema:
+        type: string
+        format: date-time
+    Provider:
+      name: provider
+      in: query
+      required: false
+      schema:
+        type: string
+    Model:
+      name: model
+      in: query
+      required: false
+      schema:
+        type: string
+    Status:
+      name: status
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - ACCEPTED
+          - STREAMING
+          - COMPLETED
+          - CANCELLED
+          - FAILED
+    ErrorCode:
+      name: errorCode
+      in: query
+      required: false
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+  responses:
+    ErrorResponse:
+      description: Deterministic error envelope
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    InferenceSummaryResponse:
+      type: object
+      required:
+        - tenantId
+        - projectId
+        - window
+        - totals
+        - timeSeries
+        - providers
+        - models
+        - statuses
+        - topErrors
+        - degraded
+      properties:
+        tenantId:
+          type: string
+        projectId:
+          type: string
+        window:
+          $ref: "#/components/schemas/AnalyticsWindow"
+        totals:
+          $ref: "#/components/schemas/InferenceTotals"
+        timeSeries:
+          type: array
+          items:
+            $ref: "#/components/schemas/InferenceTimeSeriesPoint"
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/DimensionBreakdown"
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/DimensionBreakdown"
+        statuses:
+          type: array
+          items:
+            $ref: "#/components/schemas/DimensionBreakdown"
+        topErrors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ErrorBreakdown"
+        degraded:
+          type: boolean
+    AnalyticsWindow:
+      type: object
+      required:
+        - from
+        - to
+      properties:
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+    InferenceTotals:
+      type: object
+      required:
+        - requestCount
+        - successCount
+        - failedCount
+        - cancelledCount
+        - inputTokens
+        - outputTokens
+        - totalTokens
+        - averageDurationMs
+        - p95DurationMs
+        - errorRate
+        - estimatedCostUsd
+      properties:
+        requestCount:
+          type: integer
+          format: int64
+        successCount:
+          type: integer
+          format: int64
+        failedCount:
+          type: integer
+          format: int64
+        cancelledCount:
+          type: integer
+          format: int64
+        inputTokens:
+          type: integer
+          format: int64
+        outputTokens:
+          type: integer
+          format: int64
+        totalTokens:
+          type: integer
+          format: int64
+        averageDurationMs:
+          type: number
+          format: double
+        p95DurationMs:
+          type: number
+          format: double
+        errorRate:
+          type: number
+          format: double
+        estimatedCostUsd:
+          type: number
+          format: double
+    InferenceTimeSeriesPoint:
+      type: object
+      required:
+        - bucket
+        - requestCount
+        - successCount
+        - failedCount
+        - cancelledCount
+        - averageDurationMs
+        - p95DurationMs
+        - totalTokens
+      properties:
+        bucket:
+          type: string
+          format: date-time
+        requestCount:
+          type: integer
+          format: int64
+        successCount:
+          type: integer
+          format: int64
+        failedCount:
+          type: integer
+          format: int64
+        cancelledCount:
+          type: integer
+          format: int64
+        averageDurationMs:
+          type: number
+          format: double
+        p95DurationMs:
+          type: number
+          format: double
+        totalTokens:
+          type: integer
+          format: int64
+    DimensionBreakdown:
+      type: object
+      required:
+        - name
+        - requestCount
+        - percentage
+        - averageDurationMs
+        - totalTokens
+        - estimatedCostUsd
+      properties:
+        name:
+          type: string
+        requestCount:
+          type: integer
+          format: int64
+        percentage:
+          type: number
+          format: double
+        averageDurationMs:
+          type: number
+          format: double
+        totalTokens:
+          type: integer
+          format: int64
+        estimatedCostUsd:
+          type: number
+          format: double
+    ErrorBreakdown:
+      type: object
+      required:
+        - errorCode
+        - requestCount
+        - retryableCount
+      properties:
+        errorCode:
+          type: string
+        failureStage:
+          type:
+            - string
+            - "null"
+        providerErrorCode:
+          type:
+            - string
+            - "null"
+        requestCount:
+          type: integer
+          format: int64
+        retryableCount:
+          type: integer
+          format: int64
+    InferenceRequestSearchResponse:
+      type: object
+      required:
+        - items
+        - degraded
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InferenceRequestRow"
+        nextCursor:
+          type:
+            - string
+            - "null"
+        degraded:
+          type: boolean
+    InferenceRequestRow:
+      type: object
+      required:
+        - requestId
+        - conversationId
+        - provider
+        - model
+        - status
+        - startedAt
+        - durationMs
+        - inputTokens
+        - outputTokens
+        - totalTokens
+        - estimatedCostUsd
+        - cursor
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        conversationId:
+          type: string
+          format: uuid
+        provider:
+          type: string
+        model:
+          type: string
+        status:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        durationMs:
+          type: integer
+          format: int64
+        inputTokens:
+          type: integer
+          format: int64
+        outputTokens:
+          type: integer
+          format: int64
+        totalTokens:
+          type: integer
+          format: int64
+        estimatedCostUsd:
+          type: number
+          format: double
+        errorCode:
+          type:
+            - string
+            - "null"
+        failureStage:
+          type:
+            - string
+            - "null"
+        correlationId:
+          type:
+            - string
+            - "null"
+        traceparent:
+          type:
+            - string
+            - "null"
+        cursor:
+          type: string
+    InferenceRequestDetailResponse:
+      type: object
+      required:
+        - requestId
+        - conversationId
+        - tenantId
+        - projectId
+        - provider
+        - model
+        - status
+        - startedAt
+        - durationMs
+        - inputTokens
+        - outputTokens
+        - totalTokens
+        - estimatedCostUsd
+        - events
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        conversationId:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+        projectId:
+          type: string
+        provider:
+          type: string
+        model:
+          type: string
+        status:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        durationMs:
+          type: integer
+          format: int64
+        inputTokens:
+          type: integer
+          format: int64
+        outputTokens:
+          type: integer
+          format: int64
+        totalTokens:
+          type: integer
+          format: int64
+        estimatedCostUsd:
+          type: number
+          format: double
+        errorCode:
+          type:
+            - string
+            - "null"
+        failureStage:
+          type:
+            - string
+            - "null"
+        providerErrorCode:
+          type:
+            - string
+            - "null"
+        retryable:
+          type:
+            - boolean
+            - "null"
+        cancellationReason:
+          type:
+            - string
+            - "null"
+        providerCancellationAttempted:
+          type:
+            - boolean
+            - "null"
+        providerCancellationSucceeded:
+          type:
+            - boolean
+            - "null"
+        correlationId:
+          type:
+            - string
+            - "null"
+        traceparent:
+          type:
+            - string
+            - "null"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/InferenceLifecycleEvent"
+    InferenceLifecycleEvent:
+      type: object
+      required:
+        - eventId
+        - eventName
+        - occurredAt
+        - status
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        eventName:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+        durationMs:
+          type:
+            - integer
+            - "null"
+          format: int64
+        inputTokens:
+          type:
+            - integer
+            - "null"
+          format: int64
+        outputTokens:
+          type:
+            - integer
+            - "null"
+          format: int64
+        totalTokens:
+          type:
+            - integer
+            - "null"
+          format: int64
+        errorCode:
+          type:
+            - string
+            - "null"
+        failureStage:
+          type:
+            - string
+            - "null"
+        cancellationReason:
+          type:
+            - string
+            - "null"
+    ErrorEnvelope:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - details
+            - traceId
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            traceId:
+              type: string

@@ -13,6 +13,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 @AutoConfigureObservability
 @TestPropertySource(properties = {
         "spring.flyway.enabled=false",
+        "llm-observability.analytics.clickhouse.enabled=false",
         "management.health.r2dbc.enabled=false",
         "management.otlp.tracing.endpoint=http://localhost:4318/v1/traces"
 })
