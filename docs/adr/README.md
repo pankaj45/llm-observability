@@ -24,6 +24,7 @@ ADRs capture major decisions that affect architecture, operations, data contract
 - [ADR-0018: Context Orchestrator and Live Data Grounding](ADR-0018-context-orchestrator-and-live-data-grounding.md)
 - [ADR-0019: Phase 09 PII Redaction](ADR-0019-phase-09-pii-redaction.md)
 - [ADR-0020: OpenAI Provider Adapter and Model Catalog](ADR-0020-openai-provider-adapter-and-model-catalog.md)
+- [ADR-0021: Context Compaction and Provider Context Assembly](ADR-0021-context-compaction-and-provider-context-assembly.md)
 
 ## Required ADR Format
 

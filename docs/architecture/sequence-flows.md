@@ -79,7 +79,8 @@ sequenceDiagram
     Gateway->>PG: Create inference_request linked to conversation
     Gateway->>Redis: Register active stream and cancellation key
     Gateway->>Kafka: Publish inference.requested
-    Gateway->>Provider: Start stream with prior messages plus new turn
+    Gateway->>PG: Load or persist context snapshot when token threshold requires compaction
+    Gateway->>Provider: Start stream with exact messages or snapshot plus exact recent turns
     Provider-->>Gateway: Stream chunk
     Gateway-->>Client: SSE token.delta or message.delta
     Provider-->>Gateway: Completion metadata

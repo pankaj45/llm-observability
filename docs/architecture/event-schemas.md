@@ -100,6 +100,8 @@ Phase 2 should not publish `inference.token_streamed` by default unless token-le
 
 Phase 2 lifecycle events must not include raw prompt or completion content. They may include message counts, token counts, content hashes, provider/model identifiers, and timing metadata.
 
+Conversation context compaction summaries are derived protected content. Lifecycle events must not include snapshot summary text; only hashes, counts, strategy names, and provider/model metadata are allowed if compaction metadata is added to events later.
+
 ## Phase 3 Ingestion Pipeline
 
 Phase 3 consumes `inference.lifecycle.v1` events in `services/ingestion-worker`.

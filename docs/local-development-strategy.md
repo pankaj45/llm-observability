@@ -86,6 +86,7 @@ make down               # stop local dependencies
 - Set `OPENAI_API_KEY` in the shell before starting Compose if live OpenAI calls are required. Optional `OPENAI_ORGANIZATION` and `OPENAI_PROJECT` values are forwarded to the OpenAI adapter when present.
 - Docker Compose wires the inference gateway to PostgreSQL, Redis, Kafka, and the OpenTelemetry collector.
 - `POST /v1/inference/stream` rejects request bodies with `conversationId`; the gateway always creates the conversation id and title.
+- Context compaction is enabled by default through `CONTEXT_COMPACTION_ENABLED=true`. It checks every provider-bound request and persists LLM-generated `conversation_context_snapshot` rows only when estimated input exceeds the configured threshold. If LLM compaction fails, the provider receives the configured recent exact message window.
 - Kafka lifecycle publishing is enabled in Compose through `INFERENCE_KAFKA_ENABLED=true`.
 - Docker image verification is intentionally deferred to the later image-testing pass.
 

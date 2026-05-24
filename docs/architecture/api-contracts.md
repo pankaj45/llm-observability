@@ -134,6 +134,7 @@ Required streaming behavior:
 - Request bodies must not include `conversationId`.
 - The gateway creates a UUID conversation with a UI-ready title for every new streaming inference request.
 - `POST /v1/conversations/{conversationId}/messages/stream` continues an existing conversation, appends only the new turn, and loads prior messages server-side for provider context.
+- Provider context assembly runs before the provider call. Small conversations are sent exactly; long conversations may use a protected persisted context snapshot plus exact recent messages.
 - Each SSE event includes stable `id`, `event`, and JSON `data`.
 - Event ids are monotonic within a request.
 - Heartbeats are emitted during provider silence.

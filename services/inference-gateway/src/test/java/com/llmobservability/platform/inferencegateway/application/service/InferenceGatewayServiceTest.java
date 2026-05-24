@@ -8,6 +8,8 @@ import com.llmobservability.platform.inferencegateway.application.port.in.ListCo
 import com.llmobservability.platform.inferencegateway.application.port.in.ContinueConversationCommand;
 import com.llmobservability.platform.inferencegateway.application.port.in.StartInferenceCommand;
 import com.llmobservability.platform.inferencegateway.application.port.out.ActiveStreamStateStore;
+import com.llmobservability.platform.inferencegateway.application.port.out.ConversationCompactionPort;
+import com.llmobservability.platform.inferencegateway.application.port.out.ConversationContextSnapshotRepository;
 import com.llmobservability.platform.inferencegateway.application.port.out.ConversationMessageRepository;
 import com.llmobservability.platform.inferencegateway.application.port.out.ConversationRepository;
 import com.llmobservability.platform.inferencegateway.application.port.out.InferenceCancellationRepository;
@@ -23,11 +25,13 @@ import com.llmobservability.platform.inferencegateway.application.port.out.PiiRe
 import com.llmobservability.platform.inferencegateway.application.port.out.ProviderClient;
 import com.llmobservability.platform.inferencegateway.application.port.out.ProviderClientRegistry;
 import com.llmobservability.platform.inferencegateway.config.ContextOrchestratorProperties;
+import com.llmobservability.platform.inferencegateway.config.ContextCompactionProperties;
 import com.llmobservability.platform.inferencegateway.config.InferenceGatewayProperties;
 import com.llmobservability.platform.inferencegateway.application.service.context.ContextOrchestrator;
 import com.llmobservability.platform.inferencegateway.application.service.context.RuntimeContextPolicy;
 import com.llmobservability.platform.inferencegateway.application.service.context.ToolNeedRouter;
 import com.llmobservability.platform.inferencegateway.domain.model.Conversation;
+import com.llmobservability.platform.inferencegateway.domain.model.ConversationContextSnapshot;
 import com.llmobservability.platform.inferencegateway.domain.model.ConversationStatus;
 import com.llmobservability.platform.inferencegateway.domain.model.ConversationMessage;
 import com.llmobservability.platform.inferencegateway.domain.model.InferenceCancellation;
@@ -156,6 +160,194 @@ class InferenceGatewayServiceTest {
                                 "Explain phase two",
                                 "done",
                                 "Can you give an example?"));
+        assertThat(state.providerRequests.getFirst().messages().getFirst().role()).isEqualTo("system");
+    }
+
+    @Test
+    void continueConversationCompactsOlderMessagesWhenInputExceedsBudget() {
+        TestState state = new TestState();
+        state.modelContextWindowTokens = 120;
+        state.modelMaxOutputTokens = 40;
+        InferenceGatewayService service = service(state, compactingProperties());
+        UUID conversationId = UUID.randomUUID();
+        Instant now = Instant.now();
+        state.conversations.put(conversationId, new Conversation(
+                conversationId,
+                "tenant-a",
+                "project-a",
+                ConversationStatus.ACTIVE,
+                "Long conversation",
+                "FIRST_USER_MESSAGE",
+                now,
+                now,
+                null));
+        for (int i = 0; i < 6; i++) {
+            state.messages.add(new ConversationMessage(
+                    UUID.randomUUID(),
+                    conversationId,
+                    i % 2 == 0 ? MessageRole.USER : MessageRole.ASSISTANT,
+                    i,
+                    "message-" + i + " " + "x".repeat(60),
+                    "hash-" + i,
+                    18,
+                    RedactionState.NONE,
+                    Map.of("source", "request"),
+                    now.plusMillis(i)));
+        }
+
+        service.continueConversation(new ContinueConversationCommand(
+                conversationId,
+                "tenant-a",
+                "project-a",
+                "gemini",
+                "gemini-1.5-flash",
+                List.of(new StartInferenceCommand.Message(MessageRole.USER, "latest question")),
+                Map.of("maxOutputTokens", 10),
+                Map.of("purpose", "test"),
+                "client-compact",
+                Map.of(),
+                "compact-1",
+                "trace-compact")).collectList().block();
+
+        assertThat(state.snapshots).hasSize(1);
+        assertThat(state.snapshots.getFirst().sourceEndSequence()).isEqualTo(4);
+        assertThat(state.messages).hasSize(8);
+        assertThat(state.providerRequests).singleElement()
+                .satisfies(providerRequest -> {
+                    assertThat(providerRequest.messages()).hasSize(4);
+                    assertThat(providerRequest.messages()).extracting(ProviderClient.ProviderMessage::content)
+                            .anyMatch(content -> content.contains("Earlier conversation summary"))
+                            .anyMatch(content -> content.contains("message-5"))
+                            .anyMatch(content -> content.contains("latest question"));
+                });
+    }
+
+    @Test
+    void continueConversationReusesRecentSnapshotBeforeCreatingAnotherOne() {
+        TestState state = new TestState();
+        state.modelContextWindowTokens = 120;
+        state.modelMaxOutputTokens = 40;
+        InferenceGatewayService service = service(state, compactingProperties());
+        UUID conversationId = UUID.randomUUID();
+        UUID snapshotId = UUID.randomUUID();
+        Instant now = Instant.now();
+        state.conversations.put(conversationId, new Conversation(
+                conversationId,
+                "tenant-a",
+                "project-a",
+                ConversationStatus.ACTIVE,
+                "Long conversation",
+                "FIRST_USER_MESSAGE",
+                now,
+                now,
+                null));
+        for (int i = 0; i < 6; i++) {
+            state.messages.add(new ConversationMessage(
+                    UUID.randomUUID(),
+                    conversationId,
+                    i % 2 == 0 ? MessageRole.USER : MessageRole.ASSISTANT,
+                    i,
+                    "message-" + i + " " + "x".repeat(60),
+                    "hash-" + i,
+                    18,
+                    RedactionState.NONE,
+                    Map.of("source", "request"),
+                    now.plusMillis(i)));
+        }
+        state.snapshots.add(new ConversationContextSnapshot(
+                snapshotId,
+                conversationId,
+                0,
+                3,
+                "seed summary",
+                "seed-hash",
+                3,
+                "ROLLING_SUMMARY_V1",
+                "gemini",
+                "gemini-1.5-flash",
+                UUID.randomUUID(),
+                Map.of(),
+                now));
+
+        service.continueConversation(new ContinueConversationCommand(
+                conversationId,
+                "tenant-a",
+                "project-a",
+                "gemini",
+                "gemini-1.5-flash",
+                List.of(new StartInferenceCommand.Message(MessageRole.USER, "latest question")),
+                Map.of("maxOutputTokens", 10),
+                Map.of("purpose", "test"),
+                "client-compact",
+                Map.of(),
+                "compact-2",
+                "trace-compact")).collectList().block();
+
+        assertThat(state.snapshots).hasSize(1);
+        assertThat(state.snapshots.getFirst().id()).isEqualTo(snapshotId);
+        assertThat(state.providerRequests).singleElement()
+                .satisfies(providerRequest -> assertThat(providerRequest.messages())
+                        .extracting(ProviderClient.ProviderMessage::content)
+                        .anyMatch(content -> content.contains("seed summary"))
+                        .anyMatch(content -> content.contains("message-4"))
+                        .anyMatch(content -> content.contains("latest question")));
+    }
+
+    @Test
+    void continueConversationFallsBackToRecentMessagesWhenCompactionFails() {
+        TestState state = new TestState();
+        state.modelContextWindowTokens = 120;
+        state.modelMaxOutputTokens = 40;
+        ConversationCompactionPort failingCompactor = request -> Mono.error(new IllegalStateException("provider unavailable"));
+        InferenceGatewayService service = service(state, compactingProperties(), failingCompactor);
+        UUID conversationId = UUID.randomUUID();
+        Instant now = Instant.now();
+        state.conversations.put(conversationId, new Conversation(
+                conversationId,
+                "tenant-a",
+                "project-a",
+                ConversationStatus.ACTIVE,
+                "Long conversation",
+                "FIRST_USER_MESSAGE",
+                now,
+                now,
+                null));
+        for (int i = 0; i < 6; i++) {
+            state.messages.add(new ConversationMessage(
+                    UUID.randomUUID(),
+                    conversationId,
+                    i % 2 == 0 ? MessageRole.USER : MessageRole.ASSISTANT,
+                    i,
+                    "message-" + i + " " + "x".repeat(60),
+                    "hash-" + i,
+                    18,
+                    RedactionState.NONE,
+                    Map.of("source", "request"),
+                    now.plusMillis(i)));
+        }
+
+        service.continueConversation(new ContinueConversationCommand(
+                conversationId,
+                "tenant-a",
+                "project-a",
+                "gemini",
+                "gemini-1.5-flash",
+                List.of(new StartInferenceCommand.Message(MessageRole.USER, "latest question")),
+                Map.of("maxOutputTokens", 10),
+                Map.of("purpose", "test"),
+                "client-compact",
+                Map.of(),
+                "compact-fallback",
+                "trace-compact")).collectList().block();
+
+        assertThat(state.snapshots).isEmpty();
+        assertThat(state.providerRequests).singleElement()
+                .satisfies(providerRequest -> assertThat(providerRequest.messages())
+                        .extracting(ProviderClient.ProviderMessage::content)
+                        .containsExactly(
+                                providerRequest.messages().getFirst().content(),
+                                "message-5 " + "x".repeat(60),
+                                "latest question"));
         assertThat(state.providerRequests.getFirst().messages().getFirst().role()).isEqualTo("system");
     }
 
@@ -378,6 +570,18 @@ class InferenceGatewayServiceTest {
     }
 
     private InferenceGatewayService service(TestState state) {
+        return service(state, new ContextCompactionProperties(true, 0.75, 0.60, 0, 0, 12, 8, 2_000, 1_024));
+    }
+
+    private InferenceGatewayService service(TestState state, ContextCompactionProperties compactionProperties) {
+        return service(state, compactionProperties, compactionPort());
+    }
+
+    private InferenceGatewayService service(
+            TestState state,
+            ContextCompactionProperties compactionProperties,
+            ConversationCompactionPort compactionPort
+    ) {
         return new InferenceGatewayService(
                 state.conversationRepository(),
                 state.conversationMessageRepository(),
@@ -389,11 +593,58 @@ class InferenceGatewayServiceTest {
                 state.activeStreamStateStore(),
                 state.providerClientRegistry(),
                 state.lifecycleEventPublisher(),
+                contextAssembler(state, compactionProperties, compactionPort),
                 contextOrchestrator(),
                 noOpRedaction(),
                 new ConversationTitlePolicy(),
                 new InferenceGatewayProperties(Duration.ofHours(1), Duration.ofMinutes(10)),
                 new SimpleMeterRegistry());
+    }
+
+    private ConversationContextAssembler contextAssembler(TestState state) {
+        return new ConversationContextAssembler(
+                state.conversationContextSnapshotRepository(),
+                compactionPort(),
+                new ContextCompactionProperties(true, 0.75, 0.60, 0, 0, 12, 8, 2_000, 1_024),
+                new SimpleMeterRegistry());
+    }
+
+    private ConversationContextAssembler contextAssembler(TestState state, ContextCompactionProperties properties) {
+        return contextAssembler(state, properties, compactionPort());
+    }
+
+    private ConversationContextAssembler contextAssembler(
+            TestState state,
+            ContextCompactionProperties properties,
+            ConversationCompactionPort compactionPort
+    ) {
+        return new ConversationContextAssembler(
+                state.conversationContextSnapshotRepository(),
+                compactionPort,
+                properties,
+                new SimpleMeterRegistry());
+    }
+
+    private ContextCompactionProperties compactingProperties() {
+        return new ContextCompactionProperties(true, 0.50, 0.90, 0, 0, 2, 8, 2_000, 1_024);
+    }
+
+    private ConversationCompactionPort compactionPort() {
+        return request -> {
+            StringBuilder summary = new StringBuilder("test summary\n");
+            request.priorSnapshot().ifPresent(snapshot -> summary.append(snapshot.summaryContent()).append("\n"));
+            for (int i = 0; i < request.messages().size(); i++) {
+                StartInferenceCommand.Message message = request.messages().get(i);
+                summary.append(message.role().name())
+                        .append("[")
+                        .append(request.sourceStartSequence() + i)
+                        .append("]: ")
+                        .append(message.content())
+                        .append("\n");
+            }
+            String content = summary.toString();
+            return Mono.just(new ConversationCompactionPort.CompactionResult(content, TokenEstimator.estimate(content)));
+        };
     }
 
     private ContextOrchestrator contextOrchestrator() {
@@ -447,6 +698,7 @@ class InferenceGatewayServiceTest {
                 state.activeStreamStateStore(),
                 state.providerClientRegistry(),
                 state.lifecycleEventPublisher(),
+                contextAssembler(state),
                 contextOrchestrator(),
                 emailRedactor,
                 new ConversationTitlePolicy(),
@@ -532,6 +784,7 @@ class InferenceGatewayServiceTest {
     private static final class TestState {
         final Map<UUID, Conversation> conversations = new ConcurrentHashMap<>();
         final List<ConversationMessage> messages = new ArrayList<>();
+        final List<ConversationContextSnapshot> snapshots = new ArrayList<>();
         final Map<UUID, InferenceRequest> requests = new ConcurrentHashMap<>();
         final Map<UUID, InferenceUsage> usages = new ConcurrentHashMap<>();
         final List<InferenceError> errors = new ArrayList<>();
@@ -540,6 +793,8 @@ class InferenceGatewayServiceTest {
         final Set<UUID> cancelRequested = ConcurrentHashMap.newKeySet();
         boolean lifecyclePublishFails;
         boolean redisFails;
+        int modelContextWindowTokens = 1_000_000;
+        int modelMaxOutputTokens = 8192;
 
         ConversationRepository conversationRepository() {
             return new ConversationRepository() {
@@ -611,6 +866,30 @@ class InferenceGatewayServiceTest {
                     return Flux.fromIterable(messages.stream()
                                     .filter(message -> message.conversationId().equals(conversationId))
                                     .sorted((left, right) -> Integer.compare(right.sequence(), left.sequence()))
+                                    .toList())
+                            .next();
+                }
+            };
+        }
+
+        ConversationContextSnapshotRepository conversationContextSnapshotRepository() {
+            return new ConversationContextSnapshotRepository() {
+                @Override
+                public Mono<Void> save(ConversationContextSnapshot snapshot) {
+                    snapshots.add(snapshot);
+                    return Mono.empty();
+                }
+
+                @Override
+                public Mono<ConversationContextSnapshot> findLatest(UUID conversationId, String providerKey, String modelKey) {
+                    return Flux.fromIterable(snapshots.stream()
+                                    .filter(snapshot -> snapshot.conversationId().equals(conversationId))
+                                    .filter(snapshot -> snapshot.providerKey().equals(providerKey))
+                                    .filter(snapshot -> snapshot.modelKey().equals(modelKey))
+                                    .sorted((left, right) -> {
+                                        int byEndSequence = Integer.compare(right.sourceEndSequence(), left.sourceEndSequence());
+                                        return byEndSequence != 0 ? byEndSequence : right.createdAt().compareTo(left.createdAt());
+                                    })
                                     .toList())
                             .next();
                 }
@@ -761,7 +1040,8 @@ class InferenceGatewayServiceTest {
                 @Override
                 public Mono<ModelCatalogEntry> findEnabledModel(String providerKey, String modelKey) {
                     return Mono.just(new ModelCatalogEntry(
-                            UUID.randomUUID(), UUID.randomUUID(), providerKey, "Provider", modelKey, "Model", 1_000_000, 8192, true, false));
+                            UUID.randomUUID(), UUID.randomUUID(), providerKey, "Provider", modelKey, "Model",
+                            modelContextWindowTokens, modelMaxOutputTokens, true, false));
                 }
 
                 @Override

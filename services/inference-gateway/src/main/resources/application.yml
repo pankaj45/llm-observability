@@ -84,6 +84,16 @@ llm-observability:
     coin-gecko:
       enabled: ${COINGECKO_ENABLED:true}
       base-url: ${COINGECKO_BASE_URL:https://api.coingecko.com}
+  compaction:
+    enabled: ${CONTEXT_COMPACTION_ENABLED:true}
+    trigger-threshold-ratio: ${CONTEXT_COMPACTION_TRIGGER_THRESHOLD_RATIO:0.75}
+    target-threshold-ratio: ${CONTEXT_COMPACTION_TARGET_THRESHOLD_RATIO:0.60}
+    runtime-context-reserve-tokens: ${CONTEXT_COMPACTION_RUNTIME_CONTEXT_RESERVE_TOKENS:1024}
+    tool-evidence-reserve-tokens: ${CONTEXT_COMPACTION_TOOL_EVIDENCE_RESERVE_TOKENS:2048}
+    min-exact-recent-messages: ${CONTEXT_COMPACTION_MIN_EXACT_RECENT_MESSAGES:12}
+    min-messages-beyond-snapshot: ${CONTEXT_COMPACTION_MIN_MESSAGES_BEYOND_SNAPSHOT:8}
+    min-tokens-beyond-snapshot: ${CONTEXT_COMPACTION_MIN_TOKENS_BEYOND_SNAPSHOT:2000}
+    max-summary-tokens: ${CONTEXT_COMPACTION_MAX_SUMMARY_TOKENS:1024}
   gemini:
     api-key: ${GEMINI_API_KEY:}
     base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}

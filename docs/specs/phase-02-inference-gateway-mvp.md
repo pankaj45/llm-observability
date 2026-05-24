@@ -13,6 +13,7 @@ Implemented:
 - Gemini provider adapter through the provider port.
 - OpenAI provider adapter through the provider port using the Responses API and the latest two configured frontier models, `gpt-5.5` and `gpt-5.4`.
 - Redis active stream and cancellation state.
+- Threshold-based conversation context compaction before provider calls, with persisted protected context snapshots and exact recent turns.
 - Kafka lifecycle event publisher for requested, completed, cancelled, and failed events.
 - Flyway migration for the approved phase 2 PostgreSQL entity set.
 - Reactive PostgreSQL adapters using `DatabaseClient`.
@@ -57,7 +58,6 @@ Deferred from runtime verification:
 - No analytics dashboard implementation.
 - No ClickHouse ingestion implementation.
 - No conversation summary generation.
-- No token-aware context window optimization beyond replaying persisted conversation messages for continuation requests.
 - No provider routing or fallback policy across multiple live providers.
 - No billing workflow or tenant chargeback.
 - No token stream replay from persisted stream events.
@@ -97,6 +97,7 @@ New phase 2 decision:
 - [ADR-0011: Inference Gateway Request Lifecycle Ownership](../adr/ADR-0011-inference-gateway-request-lifecycle-ownership.md)
 - [ADR-0012: Phase 2 Gemini, Conversation Content, and Redis Decisions](../adr/ADR-0012-phase-02-gemini-conversation-content-and-redis.md)
 - [ADR-0020: OpenAI Provider Adapter and Model Catalog](../adr/ADR-0020-openai-provider-adapter-and-model-catalog.md)
+- [ADR-0021: Context Compaction and Provider Context Assembly](../adr/ADR-0021-context-compaction-and-provider-context-assembly.md)
 
 ## API Contract
 
@@ -160,7 +161,7 @@ Required behavior:
 - Validate the referenced conversation exists, belongs to the tenant/project, and is active.
 - Do not accept `conversationId` in the request body; use the path parameter.
 - Persist only the newly submitted conversation messages before streaming.
-- Load prior persisted conversation messages and include them with the new turn when constructing provider context.
+- Load prior persisted conversation messages and run provider context assembly before streaming. Small conversations are passed through exactly; long conversations may use a protected persisted context snapshot plus exact recent turns.
 - Create a new `inference_request` linked to the existing conversation.
 - Return SSE stream with the same event contract as the start endpoint.
 - Persist the assistant response as the next conversation message.
@@ -361,6 +362,35 @@ Tradeoff:
 
 - Scoped message reads require joining to `conversation` for tenant/project authorization.
 - Raw prompt and completion content are sensitive and require access-control, retention, redaction, and future encryption support.
+
+### `conversation_context_snapshot`
+
+Purpose: derived provider-context summaries for long conversations.
+
+Required columns:
+
+- `id UUID PRIMARY KEY`
+- `conversation_id UUID NOT NULL REFERENCES conversation(id)`
+- `source_start_sequence INTEGER NOT NULL`
+- `source_end_sequence INTEGER NOT NULL`
+- `summary_content TEXT NOT NULL`
+- `summary_content_hash TEXT NOT NULL`
+- `estimated_tokens INTEGER NOT NULL`
+- `compaction_strategy TEXT NOT NULL`
+- `provider_key TEXT NOT NULL`
+- `model_key TEXT NOT NULL`
+- `created_by_request_id UUID NOT NULL REFERENCES inference_request(id)`
+- `metadata JSONB NOT NULL DEFAULT '{}'::jsonb`
+- `created_at TIMESTAMPTZ NOT NULL`
+
+Rules:
+
+- Snapshots are internal provider-context artifacts, not canonical conversation messages.
+- `summary_content` is derived protected conversation content and must not be logged, published to Kafka, or written to ClickHouse.
+- Compaction checks run on every provider-bound request, but snapshot creation occurs only when the exact estimated input exceeds the configured threshold.
+- Snapshot content is produced through the LLM-backed `ConversationCompactionPort`; heuristic truncation is not used for production compaction.
+- If LLM compaction fails or returns an empty summary, the gateway sends only the configured recent exact message window to the provider and does not persist a new snapshot.
+- The latest user turn and configured recent exact messages must not be compacted.
 
 ### `inference_request`
 

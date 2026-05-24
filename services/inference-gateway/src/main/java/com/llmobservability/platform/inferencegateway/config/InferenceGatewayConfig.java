@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@EnableConfigurationProperties({InferenceGatewayProperties.class, GeminiProperties.class, OpenAiProperties.class})
+@EnableConfigurationProperties({InferenceGatewayProperties.class, ContextCompactionProperties.class, GeminiProperties.class, OpenAiProperties.class})
 public class InferenceGatewayConfig {
 
     @Bean

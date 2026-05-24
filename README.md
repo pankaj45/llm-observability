@@ -123,13 +123,14 @@ When the platform is ready you will see:
 
 1. Browser POSTs to `inference-gateway` with the user message.
 2. Gateway runs `PiiRedactionPort` on all user messages before persistence. Detected PII is replaced with typed placeholders (`[EMAIL]`, `[PHONE]`, etc.); the redacted text is used for all downstream steps including the provider context.
-3. The **Context Orchestrator** injects a platform runtime context system instruction (current date/time/timezone) into every provider request. For freshness-sensitive queries (market data, news, regulations, software versions, etc.) the `ToolNeedRouter` triggers the appropriate backend tools.
-4. Tool adapters (`CoinGeckoMarketDataAdapter`, `TavilyWebSearchAdapter`) execute; results are normalized into evidence and cached in Redis. `tool.plan`, `tool.started`, `tool.completed`, and `source.available` SSE events are emitted before model tokens so the UI stays responsive.
-5. Gateway creates a conversation (PostgreSQL), saves the (redacted) message, and opens an SSE stream to the browser.
-6. Gateway calls the selected provider (Gemini or OpenAI) with the enriched context and pipes token chunks back as `token.delta` SSE events.
-7. On completion, gateway persists the assistant message and publishes `inference.completed` to Kafka.
-8. `ingestion-worker` consumes the Kafka event and writes a lifecycle fact to ClickHouse.
-9. Operator dashboard queries `analytics-query` which reads from ClickHouse.
+3. Gateway creates or validates a conversation (PostgreSQL), saves the new redacted message, and opens an SSE stream to the browser.
+4. For continuation requests, the gateway assembles provider context from exact messages for small conversations, or from a protected persisted context snapshot plus exact recent turns for long conversations.
+5. The **Context Orchestrator** injects a platform runtime context system instruction (current date/time/timezone) into every provider request. For freshness-sensitive queries (market data, news, regulations, software versions, etc.) the `ToolNeedRouter` triggers the appropriate backend tools.
+6. Tool adapters (`CoinGeckoMarketDataAdapter`, `TavilyWebSearchAdapter`) execute; results are normalized into evidence and cached in Redis. `tool.plan`, `tool.started`, `tool.completed`, and `source.available` SSE events are emitted before model tokens so the UI stays responsive.
+7. Gateway calls the selected provider (Gemini or OpenAI) with the compacted and enriched context and pipes token chunks back as `token.delta` SSE events.
+8. On completion, gateway persists the assistant message and publishes `inference.completed` to Kafka.
+9. `ingestion-worker` consumes the Kafka event and writes a lifecycle fact to ClickHouse.
+10. Operator dashboard queries `analytics-query` which reads from ClickHouse.
 
 The web app proxies dashboard API calls through its same-origin `/analytics/api/*` route. In container and Kubernetes deployments, `ANALYTICS_API_INTERNAL_BASE` points that proxy at the internal `analytics-query` service so browsers do not need to resolve cluster-only service names.
 
@@ -183,6 +184,7 @@ The ingestion pipeline is event-based and decoupled. Gateway and analytics-query
 |---|---|
 | `conversation` | Conversation aggregate: tenant, project, status, title, timestamps |
 | `conversation_message` | Persisted messages with role, **redacted** content, content hash, redaction state, sequence |
+| `conversation_context_snapshot` | Protected derived summaries for provider context compaction in long conversations |
 | `inference_request` | Request lifecycle: status, provider, model, idempotency key, timestamps |
 | `inference_usage` | Token counts and estimated cost per request |
 | `inference_error` | Error codes, failure stage, retryability per request |
@@ -193,6 +195,8 @@ The ingestion pipeline is event-based and decoupled. Gateway and analytics-query
 **Key decisions:**
 - Conversation is the aggregate root. All messages belong to a conversation.
 - `conversation_message` stores content only in PostgreSQL — not in Kafka or ClickHouse.
+- `conversation_context_snapshot` stores derived protected summary content only in PostgreSQL — not in Kafka or ClickHouse.
+- Context compaction checks run before every provider-bound request; small conversations are passed through exactly, while long conversations use an LLM-backed rolling summary plus exact recent turns. If compaction fails, the provider receives only the configured recent exact message window.
 - After Phase 9, persisted content is the post-redaction text. `input_content_hash` on `inference_request` is computed from pre-redaction content to preserve idempotency semantics.
 - `conversation_message.redaction_state` is `NONE` or `REDACTED`. When `REDACTED`, `metadata` carries `redactedCategories` (category names only, no raw values).
 - `context_tool_invocation` stores only metadata — no raw prompts, raw result bodies, credentials, or provider secrets.
@@ -312,21 +316,20 @@ The model catalog is queryable via `GET /v1/models`.
 
 ## Future Extensions
 
-1. **Context compaction** — As conversations grow, the provider context window fills with older turns. A compaction policy (e.g. rolling summary or selective message eviction) would keep context within token limits while preserving conversational coherence. The `ContinueConversationCommand` flow is the natural integration point.
-2. **NER/ML-based PII detection** — Add a second `PiiRedactionPort` implementation backed by an NER model for higher recall on free-form text (full names, addresses, custom entity types). The port interface already supports multiple implementations; no domain change is needed.
-3. **Per-tenant PII policy** — Move redaction configuration from global deployment settings to a per-tenant/project policy table. Enables selective category enablement or complete bypass per tenant.
-4. **Provider-native tools** — Surface Gemini function calling or OpenAI tool use through a provider-aware tool adapter. Requires tracking provider response IDs across lifecycle state and an ADR update for tool ownership.
-5. **Grafana dashboards** — Provision latency/throughput/error JSON dashboard files and PII/tool invocation panels so they load automatically on `make dev`.
-6. **Authentication** — Replace hardcoded tenant/project with OIDC/JWT bearer tokens. Phase 6 spec and ADR-0016 are already written; `SecurityConfig` and `TenantProjectAuthorizer` stubs exist in the gateway.
-7. **Token-level replay** — Add `inference_stream_event` table for reconnect at chunk granularity. Currently deferred; resume works at message granularity only.
-8. **Live container integration tests** — Validate Flyway migrations, Kafka publish/consume, Redis state, and ClickHouse ingestion against real containers in CI.
-9. **Conversation search** — Full-text or keyword search over conversation titles and message content (using redacted text only).
-10. **Markdown rendering** — Render code blocks, bold, and lists in assistant message bubbles.
-11. **Client-side error observability** — Emit OpenTelemetry JS traces for SSE connection errors and tool failure events.
-12. **Assistant completion redaction** — Extend `PiiRedactionPort` to scan model completions. Deferred due to higher latency implications and differing semantic requirements.
-13. **Retroactive redaction jobs** — Scheduled jobs to scan and redact PII from already-persisted messages. Requires an erasure policy and a separate Flyway migration.
-14. **GDPR right-to-erasure** — Purge or anonymise conversation records on data-subject request. Requires a legal hold check before deletion.
-15. **Additional grounding tools** — `WeatherPort`, `SportsDataPort`, `CompanyLookupPort`, `SoftwareVersionPort`, `SecurityAdvisoryPort` behind the existing `ToolRegistry` pattern.
+1. **NER/ML-based PII detection** — Add a second `PiiRedactionPort` implementation backed by an NER model for higher recall on free-form text (full names, addresses, custom entity types). The port interface already supports multiple implementations; no domain change is needed.
+2. **Per-tenant PII policy** — Move redaction configuration from global deployment settings to a per-tenant/project policy table. Enables selective category enablement or complete bypass per tenant.
+3. **Provider-native tools** — Surface Gemini function calling or OpenAI tool use through a provider-aware tool adapter. Requires tracking provider response IDs across lifecycle state and an ADR update for tool ownership.
+4. **Grafana dashboards** — Provision latency/throughput/error JSON dashboard files and PII/tool invocation panels so they load automatically on `make dev`.
+5. **Authentication** — Replace hardcoded tenant/project with OIDC/JWT bearer tokens. Phase 6 spec and ADR-0016 are already written; `SecurityConfig` and `TenantProjectAuthorizer` stubs exist in the gateway.
+6. **Token-level replay** — Add `inference_stream_event` table for reconnect at chunk granularity. Currently deferred; resume works at message granularity only.
+7. **Live container integration tests** — Validate Flyway migrations, Kafka publish/consume, Redis state, and ClickHouse ingestion against real containers in CI.
+8. **Conversation search** — Full-text or keyword search over conversation titles and message content (using redacted text only).
+9. **Markdown rendering** — Render code blocks, bold, and lists in assistant message bubbles.
+10. **Client-side error observability** — Emit OpenTelemetry JS traces for SSE connection errors and tool failure events.
+11. **Assistant completion redaction** — Extend `PiiRedactionPort` to scan model completions. Deferred due to higher latency implications and differing semantic requirements.
+12. **Retroactive redaction jobs** — Scheduled jobs to scan and redact PII from already-persisted messages. Requires an erasure policy and a separate Flyway migration.
+13. **GDPR right-to-erasure** — Purge or anonymise conversation records on data-subject request. Requires a legal hold check before deletion.
+14. **Additional grounding tools** — `WeatherPort`, `SportsDataPort`, `CompanyLookupPort`, `SoftwareVersionPort`, `SecurityAdvisoryPort` behind the existing `ToolRegistry` pattern.
 
 ---
 

@@ -99,6 +99,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
     private final ActiveStreamStateStore activeStreamStateStore;
     private final ProviderClientRegistry providerClientRegistry;
     private final LifecycleEventPublisher lifecycleEventPublisher;
+    private final ConversationContextAssembler contextAssembler;
     private final ContextOrchestrator contextOrchestrator;
     private final PiiRedactionPort piiRedactionPort;
     private final ConversationTitlePolicy titlePolicy;
@@ -117,6 +118,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
             ActiveStreamStateStore activeStreamStateStore,
             ProviderClientRegistry providerClientRegistry,
             LifecycleEventPublisher lifecycleEventPublisher,
+            ConversationContextAssembler contextAssembler,
             ContextOrchestrator contextOrchestrator,
             PiiRedactionPort piiRedactionPort,
             ConversationTitlePolicy titlePolicy,
@@ -134,6 +136,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                 activeStreamStateStore,
                 providerClientRegistry,
                 lifecycleEventPublisher,
+                contextAssembler,
                 contextOrchestrator,
                 piiRedactionPort,
                 titlePolicy,
@@ -154,6 +157,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
             ActiveStreamStateStore activeStreamStateStore,
             ProviderClientRegistry providerClientRegistry,
             LifecycleEventPublisher lifecycleEventPublisher,
+            ConversationContextAssembler contextAssembler,
             ContextOrchestrator contextOrchestrator,
             PiiRedactionPort piiRedactionPort,
             ConversationTitlePolicy titlePolicy,
@@ -171,6 +175,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
         this.activeStreamStateStore = activeStreamStateStore;
         this.providerClientRegistry = providerClientRegistry;
         this.lifecycleEventPublisher = lifecycleEventPublisher;
+        this.contextAssembler = contextAssembler;
         this.contextOrchestrator = contextOrchestrator;
         this.piiRedactionPort = piiRedactionPort;
         this.titlePolicy = titlePolicy;
@@ -546,7 +551,8 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                 Mono.just(event(StreamEventType.REQUEST_ACCEPTED, request, sequence.incrementAndGet(), execution.traceId(), Map.of(
                         "status", InferenceStatus.ACCEPTED.name(),
                         "conversation", execution.conversationState()))),
-                contextOrchestrator.orchestrate(request, execution.providerMessages())
+                contextAssembler.assemble(request, prepared.model(), execution.providerMessages(), execution.parameters())
+                        .flatMap(assembly -> contextOrchestrator.orchestrate(request, assembly.providerMessages()))
                         .flatMapMany(context -> Flux.concat(
                                 Flux.fromIterable(context.progressEvents())
                                         .map(progress -> contextEvent(progress, request, sequence.incrementAndGet(), execution.traceId())),
@@ -624,7 +630,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                 request.inputMessageCount(),
                 assistantContent,
                 outputHash,
-                estimateTokens(assistantContent),
+                TokenEstimator.estimate(assistantContent),
                 RedactionState.NONE,
                 Map.of("source", "gemini", "partial", "false"),
                 now);
@@ -734,7 +740,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                 request.inputMessageCount(),
                 assistantContent,
                 ContentHasher.sha256(assistantContent),
-                estimateTokens(assistantContent),
+                TokenEstimator.estimate(assistantContent),
                 RedactionState.NONE,
                 Map.of("source", "gemini", "partial", "true", "terminalState", terminalState),
                 now);
@@ -834,7 +840,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                         i,
                         redacted.content(),
                         ContentHasher.sha256(redacted.content()),
-                        estimateTokens(redacted.content()),
+                        TokenEstimator.estimate(redacted.content()),
                         redacted.state(),
                         redacted.metadata(),
                         now));
@@ -846,7 +852,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                         i,
                         message.content(),
                         ContentHasher.sha256(message.content()),
-                        estimateTokens(message.content()),
+                        TokenEstimator.estimate(message.content()),
                         RedactionState.NONE,
                         Map.of("source", "request"),
                         now));
@@ -868,7 +874,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                         startingSequence + i,
                         redacted.content(),
                         ContentHasher.sha256(redacted.content()),
-                        estimateTokens(redacted.content()),
+                        TokenEstimator.estimate(redacted.content()),
                         redacted.state(),
                         redacted.metadata(),
                         now));
@@ -880,7 +886,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                         startingSequence + i,
                         message.content(),
                         ContentHasher.sha256(message.content()),
-                        estimateTokens(message.content()),
+                        TokenEstimator.estimate(message.content()),
                         RedactionState.NONE,
                         Map.of("source", "request"),
                         now));
@@ -1314,13 +1320,6 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
 
     private InferenceError emptyError(UUID requestId) {
         return new InferenceError(null, null, null, null, null, null, false, null);
-    }
-
-    private int estimateTokens(String content) {
-        if (content == null || content.isBlank()) {
-            return 0;
-        }
-        return Math.max(1, (int) Math.ceil(content.length() / 4.0));
     }
 
     private record PreparedStream(InferenceRequest request, ModelCatalogEntry model, ProviderClient providerClient, List<ConversationMessage> redactedMessages) {
