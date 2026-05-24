@@ -112,6 +112,7 @@ class PostgresInferenceRequestRepository implements InferenceRequestRepository {
                         UPDATE inference_request
                         SET status = :status, first_token_at = COALESCE(first_token_at, :firstTokenAt), updated_at = :updatedAt
                         WHERE id = :id
+                          AND status = 'ACCEPTED'
                         """)
                 .bind("id", requestId)
                 .bind("status", InferenceStatus.STREAMING.name())
@@ -123,11 +124,12 @@ class PostgresInferenceRequestRepository implements InferenceRequestRepository {
     }
 
     @Override
-    public Mono<Void> markCompleted(UUID requestId, String outputContentHash, Instant completedAt) {
+    public Mono<Boolean> markCompleted(UUID requestId, String outputContentHash, Instant completedAt) {
         return databaseClient.sql("""
                         UPDATE inference_request
                         SET status = :status, output_content_hash = :outputContentHash, completed_at = :completedAt, updated_at = :completedAt
                         WHERE id = :id
+                          AND status IN ('ACCEPTED', 'STREAMING')
                         """)
                 .bind("id", requestId)
                 .bind("status", InferenceStatus.COMPLETED.name())
@@ -135,16 +137,16 @@ class PostgresInferenceRequestRepository implements InferenceRequestRepository {
                 .bind("completedAt", completedAt)
                 .fetch()
                 .rowsUpdated()
-                .then();
+                .map(updated -> updated > 0);
     }
 
     @Override
-    public Mono<Void> markCancelled(UUID requestId, Instant cancelledAt) {
+    public Mono<Boolean> markCancelled(UUID requestId, Instant cancelledAt) {
         return updateStatusTimestamp(requestId, InferenceStatus.CANCELLED, "cancelled_at", cancelledAt);
     }
 
     @Override
-    public Mono<Void> markFailed(UUID requestId, Instant failedAt) {
+    public Mono<Boolean> markFailed(UUID requestId, Instant failedAt) {
         return updateStatusTimestamp(requestId, InferenceStatus.FAILED, "failed_at", failedAt);
     }
 
@@ -163,18 +165,19 @@ class PostgresInferenceRequestRepository implements InferenceRequestRepository {
                 .then();
     }
 
-    private Mono<Void> updateStatusTimestamp(UUID requestId, InferenceStatus status, String timestampColumn, Instant timestamp) {
+    private Mono<Boolean> updateStatusTimestamp(UUID requestId, InferenceStatus status, String timestampColumn, Instant timestamp) {
         return databaseClient.sql("""
                         UPDATE inference_request
                         SET status = :status, %s = :timestamp, updated_at = :timestamp
                         WHERE id = :id
+                          AND status IN ('ACCEPTED', 'STREAMING')
                         """.formatted(timestampColumn))
                 .bind("id", requestId)
                 .bind("status", status.name())
                 .bind("timestamp", timestamp)
                 .fetch()
                 .rowsUpdated()
-                .then();
+                .map(updated -> updated > 0);
     }
 
     private DatabaseClient.GenericExecuteSpec select(String predicate) {

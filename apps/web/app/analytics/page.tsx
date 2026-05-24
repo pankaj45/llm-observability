@@ -195,20 +195,27 @@ function analyticsUrl(path: string, params: URLSearchParams) {
   return `${apiBase.replace(/\/$/, "")}${path}?${params.toString()}`;
 }
 
+function publicErrorDetail(message: string | undefined, fallback: string) {
+  if (!message || /clickhouse/i.test(message)) {
+    return fallback;
+  }
+  return message === fallback ? fallback : `${fallback}: ${message}`;
+}
+
 async function errorMessage(response: Response, label: string) {
-  const fallback = `${label} failed with HTTP ${response.status}`;
+  const fallback = `${label} failed`;
   try {
     const body = (await response.json()) as { error?: { message?: string; code?: string } };
     if (body.error?.message) {
-      return `${label} failed: ${body.error.message}`;
+      return publicErrorDetail(body.error.message, fallback);
     }
     if (body.error?.code) {
-      return `${label} failed: ${body.error.code}`;
+      return publicErrorDetail(body.error.code, fallback);
     }
   } catch {
     // The response may be an HTML proxy error or an empty body.
   }
-  return fallback;
+  return `${fallback} with HTTP ${response.status}`;
 }
 
 export default function HomePage() {

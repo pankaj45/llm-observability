@@ -57,9 +57,14 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.SignalType;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -70,6 +75,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -98,6 +104,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
     private final ConversationTitlePolicy titlePolicy;
     private final InferenceGatewayProperties properties;
     private final MeterRegistry meterRegistry;
+    private final Optional<TransactionalOperator> transactionalOperator;
 
     public InferenceGatewayService(
             ConversationRepository conversationRepository,
@@ -116,6 +123,44 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
             InferenceGatewayProperties properties,
             MeterRegistry meterRegistry
     ) {
+        this(
+                conversationRepository,
+                conversationMessageRepository,
+                inferenceRequestRepository,
+                inferenceUsageRepository,
+                inferenceErrorRepository,
+                inferenceCancellationRepository,
+                modelCatalogRepository,
+                activeStreamStateStore,
+                providerClientRegistry,
+                lifecycleEventPublisher,
+                contextOrchestrator,
+                piiRedactionPort,
+                titlePolicy,
+                properties,
+                meterRegistry,
+                Optional.empty());
+    }
+
+    @Autowired
+    public InferenceGatewayService(
+            ConversationRepository conversationRepository,
+            ConversationMessageRepository conversationMessageRepository,
+            InferenceRequestRepository inferenceRequestRepository,
+            InferenceUsageRepository inferenceUsageRepository,
+            InferenceErrorRepository inferenceErrorRepository,
+            InferenceCancellationRepository inferenceCancellationRepository,
+            ModelCatalogRepository modelCatalogRepository,
+            ActiveStreamStateStore activeStreamStateStore,
+            ProviderClientRegistry providerClientRegistry,
+            LifecycleEventPublisher lifecycleEventPublisher,
+            ContextOrchestrator contextOrchestrator,
+            PiiRedactionPort piiRedactionPort,
+            ConversationTitlePolicy titlePolicy,
+            InferenceGatewayProperties properties,
+            MeterRegistry meterRegistry,
+            Optional<TransactionalOperator> transactionalOperator
+    ) {
         this.conversationRepository = conversationRepository;
         this.conversationMessageRepository = conversationMessageRepository;
         this.inferenceRequestRepository = inferenceRequestRepository;
@@ -131,6 +176,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
         this.titlePolicy = titlePolicy;
         this.properties = properties;
         this.meterRegistry = meterRegistry;
+        this.transactionalOperator = transactionalOperator;
     }
 
     @Override
@@ -233,6 +279,10 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                     }
 
                     return activeStreamStateStore.requestCancellation(request.id(), properties.activeStreamTtl())
+                            .onErrorResume(error -> {
+                                log.warn("active_stream.cancel_marker.failed requestId={} errorType={}", request.id(), error.getClass().getSimpleName());
+                                return Mono.empty();
+                            })
                             .then(providerClientRegistry.get(request.providerKey()))
                             .flatMap(providerClient -> providerClient.cancel(request.id()))
                             .flatMap(providerResult -> {
@@ -245,8 +295,11 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                                         providerResult.succeeded(),
                                         now,
                                         Instant.now());
-                                return inferenceCancellationRepository.save(cancellation)
+                                return transactional(inferenceCancellationRepository.save(cancellation)
                                         .then(inferenceRequestRepository.markCancelled(request.id(), now))
+                                        .flatMap(updated -> updated
+                                                ? Mono.<Void>empty()
+                                                : Mono.error(new TerminalTransitionSkippedException(request.id(), InferenceStatus.CANCELLED))))
                                         .then(publish("inference.cancelled", request, Map.of(
                                                 "requestId", request.id().toString(),
                                                 "conversationId", request.conversationId().toString(),
@@ -258,7 +311,11 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                                                 request.conversationId(),
                                                 InferenceStatus.CANCELLED,
                                                 providerResult.attempted(),
-                                                providerResult.succeeded()));
+                                                providerResult.succeeded()))
+                                        .onErrorResume(TerminalTransitionSkippedException.class, ignored -> Mono.error(new ApplicationException(
+                                                ErrorCode.STREAM_CANCELLED,
+                                                FailureStage.STREAMING,
+                                                "Inference request is not active")));
                             });
                 })
                 .doOnSuccess(result -> Counter.builder("inference_stream_cancellations_total")
@@ -382,11 +439,16 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                         "Model is not enabled for provider")))
                 .flatMap(model -> {
                     List<ConversationMessage> redactedMessages = toConversationMessages(command, conversationId, now);
-                    return conversationRepository.save(conversation)
+                    return transactional(conversationRepository.save(conversation)
                             .then(conversationMessageRepository.saveAll(redactedMessages))
                             .then(Mono.just(createRequest(command, requestId, conversationId, model, redisStreamKey, now)))
-                            .flatMap(inferenceRequestRepository::save)
+                            .flatMap(inferenceRequestRepository::save))
+                            .onErrorMap(this::setupConflict)
                             .flatMap(request -> activeStreamStateStore.register(request.id(), request.conversationId(), properties.activeStreamTtl())
+                                    .onErrorResume(error -> {
+                                        log.warn("active_stream.register.failed requestId={} errorType={}", request.id(), error.getClass().getSimpleName());
+                                        return Mono.empty();
+                                    })
                                     .then(publish("inference.requested", request, command.traceId(), requestedPayload(request)))
                                     .then(providerClientRegistry.get(command.provider()))
                                     .map(providerClient -> PreparedStream.create(request, model, providerClient, redactedMessages)));
@@ -455,10 +517,15 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                         ErrorCode.PROVIDER_UNSUPPORTED,
                         FailureStage.VALIDATION,
                         "Model is not enabled for provider")))
-                .flatMap(model -> conversationMessageRepository.saveAll(newMessages)
+                .flatMap(model -> transactional(conversationMessageRepository.saveAll(newMessages)
                         .then(Mono.just(createRequest(command, requestId, model, redisStreamKey, providerMessages, now)))
-                        .flatMap(inferenceRequestRepository::save)
+                        .flatMap(inferenceRequestRepository::save))
+                        .onErrorMap(this::setupConflict)
                         .flatMap(request -> activeStreamStateStore.register(request.id(), request.conversationId(), properties.activeStreamTtl())
+                                .onErrorResume(error -> {
+                                    log.warn("active_stream.register.failed requestId={} errorType={}", request.id(), error.getClass().getSimpleName());
+                                    return Mono.empty();
+                                })
                                 .then(publish("inference.requested", request, command.traceId(), requestedPayload(request)))
                                 .then(providerClientRegistry.get(command.provider()))
                                 .map(providerClient -> new PreparedContinuation(
@@ -485,6 +552,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                                         .map(progress -> contextEvent(progress, request, sequence.incrementAndGet(), execution.traceId())),
                                 providerClient.stream(toProviderRequest(request, execution.withProviderMessages(context.providerMessages())))
                                         .flatMap(chunk -> activeStreamStateStore.cancellationRequested(request.id())
+                                                .onErrorReturn(false)
                                                 .flatMap(cancelled -> {
                                                     if (Boolean.TRUE.equals(cancelled)) {
                                                         return Mono.error(new ApplicationException(
@@ -543,7 +611,7 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                     }
                     return failRequest(request, assistantContent.toString(), error, sequence, execution.traceId());
                 })
-                .doFinally(signalType -> activeStreamStateStore.clear(request.id()).subscribe());
+                .doFinally(signalType -> cleanupStream(request, assistantContent.toString(), execution.traceId(), signalType).subscribe());
     }
 
     private Mono<StreamEvent> completeRequest(InferenceRequest request, String assistantContent, int inputTokens, int outputTokens, AtomicLong sequence, String traceId) {
@@ -571,9 +639,12 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                 "USD",
                 now);
 
-        return conversationMessageRepository.save(assistantMessage)
+        return transactional(conversationMessageRepository.save(assistantMessage)
                 .then(inferenceUsageRepository.save(usage))
                 .then(inferenceRequestRepository.markCompleted(request.id(), outputHash, now))
+                .flatMap(updated -> updated
+                        ? Mono.<Void>empty()
+                        : Mono.error(new TerminalTransitionSkippedException(request.id(), InferenceStatus.COMPLETED))))
                 .then(publish("inference.completed", request, traceId, Map.of(
                         "requestId", request.id().toString(),
                         "conversationId", request.conversationId().toString(),
@@ -588,13 +659,17 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                         "status", InferenceStatus.COMPLETED.name(),
                         "inputTokens", inputTokens,
                         "outputTokens", outputTokens,
-                        "totalTokens", inputTokens + outputTokens)));
+                        "totalTokens", inputTokens + outputTokens)))
+                .onErrorResume(TerminalTransitionSkippedException.class, ignored -> Mono.empty());
     }
 
     private Flux<StreamEvent> cancelStream(InferenceRequest request, String assistantContent, AtomicLong sequence, String traceId) {
         Instant now = Instant.now();
-        return persistPartialAssistantMessage(request, assistantContent, "cancelled", now)
+        return transactional(persistPartialAssistantMessage(request, assistantContent, "cancelled", now)
                 .then(inferenceRequestRepository.markCancelled(request.id(), now))
+                .flatMap(updated -> updated
+                        ? Mono.<Void>empty()
+                        : Mono.error(new TerminalTransitionSkippedException(request.id(), InferenceStatus.CANCELLED))))
                 .then(publish("inference.cancelled", request, traceId, Map.of(
                         "requestId", request.id().toString(),
                         "conversationId", request.conversationId().toString(),
@@ -602,7 +677,8 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                         "model", request.modelKey(),
                         "status", InferenceStatus.CANCELLED.name())))
                 .thenMany(Flux.just(event(StreamEventType.REQUEST_CANCELLED, request, sequence.incrementAndGet(), traceId, Map.of(
-                        "status", InferenceStatus.CANCELLED.name()))));
+                        "status", InferenceStatus.CANCELLED.name()))))
+                .onErrorResume(TerminalTransitionSkippedException.class, ignored -> Flux.empty());
     }
 
     private Flux<StreamEvent> failRequest(InferenceRequest request, String assistantContent, Throwable throwable, AtomicLong sequence, String traceId) {
@@ -625,9 +701,12 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                 exception.getMessage(),
                 exception.retryable(),
                 now);
-        return inferenceErrorRepository.save(error)
+        return transactional(inferenceErrorRepository.save(error)
                 .then(persistPartialAssistantMessage(request, assistantContent, "failed", now))
                 .then(inferenceRequestRepository.markFailed(request.id(), now))
+                .flatMap(updated -> updated
+                        ? Mono.<Void>empty()
+                        : Mono.error(new TerminalTransitionSkippedException(request.id(), InferenceStatus.FAILED))))
                 .then(publish("inference.failed", request, traceId, Map.of(
                         "requestId", request.id().toString(),
                         "conversationId", request.conversationId().toString(),
@@ -640,7 +719,8 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                 .thenMany(Flux.just(event(StreamEventType.REQUEST_FAILED, request, sequence.incrementAndGet(), traceId, Map.of(
                         "status", InferenceStatus.FAILED.name(),
                         "errorCode", exception.errorCode().code(),
-                        "message", exception.getMessage()))));
+                        "message", exception.getMessage()))))
+                .onErrorResume(TerminalTransitionSkippedException.class, ignored -> Flux.empty());
     }
 
     private Mono<Void> persistPartialAssistantMessage(InferenceRequest request, String assistantContent, String terminalState, Instant now) {
@@ -895,7 +975,57 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                 request.id().toString(),
                 traceparent,
                 request.idempotencyKey() + ":" + eventName,
-                payload);
+                payload)
+                .onErrorResume(error -> {
+                    log.warn("lifecycle_event.publish.failed eventName={} requestId={} errorType={}",
+                            eventName, request.id(), error.getClass().getSimpleName());
+                    return Mono.empty();
+                });
+    }
+
+    private Mono<Void> cleanupStream(InferenceRequest request, String assistantContent, String traceId, SignalType signalType) {
+        Mono<Void> terminalCleanup = Mono.empty();
+        if (signalType == SignalType.CANCEL) {
+            Instant now = Instant.now();
+            terminalCleanup = transactional(persistPartialAssistantMessage(request, assistantContent, "client_disconnected", now)
+                    .then(inferenceRequestRepository.markCancelled(request.id(), now))
+                    .flatMap(updated -> updated
+                            ? Mono.<Void>empty()
+                            : Mono.error(new TerminalTransitionSkippedException(request.id(), InferenceStatus.CANCELLED))))
+                    .then(publish("inference.cancelled", request, traceId, Map.of(
+                            "requestId", request.id().toString(),
+                            "conversationId", request.conversationId().toString(),
+                            "provider", request.providerKey(),
+                            "model", request.modelKey(),
+                            "status", InferenceStatus.CANCELLED.name(),
+                            "reason", "client_disconnected")))
+                    .onErrorResume(TerminalTransitionSkippedException.class, ignored -> Mono.empty());
+        }
+        return terminalCleanup
+                .then(activeStreamStateStore.clear(request.id())
+                        .onErrorResume(error -> {
+                            log.warn("active_stream.clear.failed requestId={} errorType={}", request.id(), error.getClass().getSimpleName());
+                            return Mono.empty();
+                        }));
+    }
+
+    private <T> Mono<T> transactional(Mono<T> mono) {
+        return transactionalOperator
+                .map(operator -> operator.transactional(mono))
+                .orElse(mono);
+    }
+
+    private Throwable setupConflict(Throwable error) {
+        if (error instanceof DuplicateKeyException || error instanceof DataIntegrityViolationException) {
+            return new ApplicationException(
+                    ErrorCode.VALIDATION_INVALID_REQUEST,
+                    FailureStage.VALIDATION,
+                    null,
+                    "Request setup conflicted with an existing idempotency key or active stream",
+                    false,
+                    error);
+        }
+        return error;
     }
 
     private StreamEvent event(StreamEventType type, InferenceRequest request, long sequence, String traceId, Map<String, Object> data) {
@@ -1210,6 +1340,12 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
     ) {
         StreamExecution withProviderMessages(List<StartInferenceCommand.Message> nextProviderMessages) {
             return new StreamExecution(parameters, traceId, nextProviderMessages, conversationState);
+        }
+    }
+
+    private static final class TerminalTransitionSkippedException extends RuntimeException {
+        TerminalTransitionSkippedException(UUID requestId, InferenceStatus targetStatus) {
+            super("Terminal transition to " + targetStatus + " skipped for request " + requestId);
         }
     }
 

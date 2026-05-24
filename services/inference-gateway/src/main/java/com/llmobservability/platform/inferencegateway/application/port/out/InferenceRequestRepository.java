@@ -23,11 +23,11 @@ public interface InferenceRequestRepository {
 
     Mono<Void> markStreaming(UUID requestId, Instant firstTokenAt);
 
-    Mono<Void> markCompleted(UUID requestId, String outputContentHash, Instant completedAt);
+    Mono<Boolean> markCompleted(UUID requestId, String outputContentHash, Instant completedAt);
 
-    Mono<Void> markCancelled(UUID requestId, Instant cancelledAt);
+    Mono<Boolean> markCancelled(UUID requestId, Instant cancelledAt);
 
-    Mono<Void> markFailed(UUID requestId, Instant failedAt);
+    Mono<Boolean> markFailed(UUID requestId, Instant failedAt);
 
     Mono<Void> updateStatus(UUID requestId, InferenceStatus status, Instant updatedAt);
 }

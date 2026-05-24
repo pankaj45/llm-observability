@@ -349,6 +349,34 @@ class InferenceGatewayServiceTest {
         assertThat(state.cancelRequested).contains(request.id());
     }
 
+    @Test
+    void kafkaPublishFailureDoesNotFailCompletedStream() {
+        TestState state = new TestState();
+        state.lifecyclePublishFails = true;
+        InferenceGatewayService service = service(state);
+
+        List<StreamEvent> events = service.stream(command("phase2-kafka-failure")).collectList().block();
+
+        assertThat(events).extracting(StreamEvent::type)
+                .containsExactly(StreamEventType.REQUEST_ACCEPTED, StreamEventType.TOKEN_DELTA, StreamEventType.REQUEST_COMPLETED);
+        InferenceRequest request = state.requests.values().iterator().next();
+        assertThat(request.status()).isEqualTo(InferenceStatus.COMPLETED);
+        assertThat(state.errors).isEmpty();
+    }
+
+    @Test
+    void redisFailureDoesNotFailProviderStream() {
+        TestState state = new TestState();
+        state.redisFails = true;
+        InferenceGatewayService service = service(state);
+
+        List<StreamEvent> events = service.stream(command("phase2-redis-failure")).collectList().block();
+
+        assertThat(events).extracting(StreamEvent::type)
+                .containsExactly(StreamEventType.REQUEST_ACCEPTED, StreamEventType.TOKEN_DELTA, StreamEventType.REQUEST_COMPLETED);
+        assertThat(state.requests.values().iterator().next().status()).isEqualTo(InferenceStatus.COMPLETED);
+    }
+
     private InferenceGatewayService service(TestState state) {
         return new InferenceGatewayService(
                 state.conversationRepository(),
@@ -510,6 +538,8 @@ class InferenceGatewayServiceTest {
         final List<InferenceCancellation> cancellations = new ArrayList<>();
         final List<ProviderClient.ProviderRequest> providerRequests = new ArrayList<>();
         final Set<UUID> cancelRequested = ConcurrentHashMap.newKeySet();
+        boolean lifecyclePublishFails;
+        boolean redisFails;
 
         ConversationRepository conversationRepository() {
             return new ConversationRepository() {
@@ -643,21 +673,30 @@ class InferenceGatewayServiceTest {
                 }
 
                 @Override
-                public Mono<Void> markCompleted(UUID requestId, String outputContentHash, Instant completedAt) {
+                public Mono<Boolean> markCompleted(UUID requestId, String outputContentHash, Instant completedAt) {
+                    if (!requests.get(requestId).active()) {
+                        return Mono.just(false);
+                    }
                     replace(requestId, InferenceStatus.COMPLETED, null, completedAt, null, null, outputContentHash);
-                    return Mono.empty();
+                    return Mono.just(true);
                 }
 
                 @Override
-                public Mono<Void> markCancelled(UUID requestId, Instant cancelledAt) {
+                public Mono<Boolean> markCancelled(UUID requestId, Instant cancelledAt) {
+                    if (!requests.get(requestId).active()) {
+                        return Mono.just(false);
+                    }
                     replace(requestId, InferenceStatus.CANCELLED, null, null, cancelledAt, null, null);
-                    return Mono.empty();
+                    return Mono.just(true);
                 }
 
                 @Override
-                public Mono<Void> markFailed(UUID requestId, Instant failedAt) {
+                public Mono<Boolean> markFailed(UUID requestId, Instant failedAt) {
+                    if (!requests.get(requestId).active()) {
+                        return Mono.just(false);
+                    }
                     replace(requestId, InferenceStatus.FAILED, null, null, null, failedAt, null);
-                    return Mono.empty();
+                    return Mono.just(true);
                 }
 
                 @Override
@@ -736,11 +775,17 @@ class InferenceGatewayServiceTest {
             return new ActiveStreamStateStore() {
                 @Override
                 public Mono<Void> register(UUID requestId, UUID conversationId, Duration ttl) {
+                    if (redisFails) {
+                        return Mono.error(new IllegalStateException("redis unavailable"));
+                    }
                     return Mono.empty();
                 }
 
                 @Override
                 public Mono<Void> appendEvent(UUID requestId, UUID conversationId, StreamEvent event, Duration ttl) {
+                    if (redisFails) {
+                        return Mono.error(new IllegalStateException("redis unavailable"));
+                    }
                     return Mono.empty();
                 }
 
@@ -756,17 +801,26 @@ class InferenceGatewayServiceTest {
 
                 @Override
                 public Mono<Void> requestCancellation(UUID requestId, Duration ttl) {
+                    if (redisFails) {
+                        return Mono.error(new IllegalStateException("redis unavailable"));
+                    }
                     cancelRequested.add(requestId);
                     return Mono.empty();
                 }
 
                 @Override
                 public Mono<Boolean> cancellationRequested(UUID requestId) {
+                    if (redisFails) {
+                        return Mono.error(new IllegalStateException("redis unavailable"));
+                    }
                     return Mono.just(cancelRequested.contains(requestId));
                 }
 
                 @Override
                 public Mono<Void> clear(UUID requestId) {
+                    if (redisFails) {
+                        return Mono.error(new IllegalStateException("redis unavailable"));
+                    }
                     return Mono.empty();
                 }
             };
@@ -797,7 +851,9 @@ class InferenceGatewayServiceTest {
         }
 
         LifecycleEventPublisher lifecycleEventPublisher() {
-            return (eventName, tenantId, projectId, correlationId, traceparent, idempotencyKey, payload) -> Mono.empty();
+            return (eventName, tenantId, projectId, correlationId, traceparent, idempotencyKey, payload) -> lifecyclePublishFails
+                    ? Mono.error(new IllegalStateException("kafka unavailable"))
+                    : Mono.empty();
         }
 
         private void replace(

@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,7 +50,7 @@ class RegexPiiRedactionAdapter implements PiiRedactionPort {
                 active.put(name, pattern);
             }
         });
-        this.enabledPatterns = Map.copyOf(active);
+        this.enabledPatterns = Collections.unmodifiableMap(active);
     }
 
     @Override
@@ -121,7 +122,7 @@ class RegexPiiRedactionAdapter implements PiiRedactionPort {
         patterns.put("PHONE", Pattern.compile(
                 "(?<![\\d])(?:\\+?\\d[\\d\\s\\-.()]{6,}\\d)(?![\\d])"));
 
-        return Map.copyOf(patterns);
+        return Collections.unmodifiableMap(patterns);
     }
 
     // -------------------------------------------------------------------------

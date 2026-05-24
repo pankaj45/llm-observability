@@ -73,6 +73,8 @@ public class InferenceController {
             @RequestHeader(name = "X-Cancel-Reason", required = false) String reason
     ) {
         return authorizer.requireScope("inference:write")
+                .then(useCase.status(new GetInferenceStatusQuery(requestId)))
+                .flatMap(status -> authorizer.requireTenantProject(status.tenantId(), status.projectId(), "inference:write"))
                 .then(useCase.cancel(new CancelInferenceCommand(
                         requestId,
                         requestedBy == null || requestedBy.isBlank() ? "api" : requestedBy,
@@ -89,6 +91,8 @@ public class InferenceController {
     Mono<InferenceStatusResponse> status(@PathVariable UUID requestId) {
         return authorizer.requireScope("inference:read")
                 .then(useCase.status(new GetInferenceStatusQuery(requestId)))
+                .flatMap(result -> authorizer.requireTenantProject(result.tenantId(), result.projectId(), "inference:read")
+                        .thenReturn(result))
                 .map(InferenceStatusResponse::from);
     }
 

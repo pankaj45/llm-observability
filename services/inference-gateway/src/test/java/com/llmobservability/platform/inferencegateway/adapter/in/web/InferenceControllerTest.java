@@ -2,6 +2,7 @@ package com.llmobservability.platform.inferencegateway.adapter.in.web;
 
 import com.llmobservability.platform.inferencegateway.application.port.in.CancelInferenceResult;
 import com.llmobservability.platform.inferencegateway.application.port.in.InferenceGatewayUseCase;
+import com.llmobservability.platform.inferencegateway.application.port.in.InferenceStatusResult;
 import com.llmobservability.platform.inferencegateway.domain.model.InferenceStatus;
 import com.llmobservability.platform.inferencegateway.domain.model.StreamEvent;
 import com.llmobservability.platform.inferencegateway.domain.model.StreamEventType;
@@ -117,6 +118,23 @@ class InferenceControllerTest {
     void cancelReturnsCancellationResult() {
         UUID requestId = UUID.randomUUID();
         UUID conversationId = UUID.randomUUID();
+        when(useCase.status(any())).thenReturn(Mono.just(new InferenceStatusResult(
+                requestId,
+                conversationId,
+                "tenant-a",
+                "project-a",
+                "gemini",
+                "gemini-1.5-flash",
+                InferenceStatus.STREAMING,
+                Instant.now(),
+                Instant.now(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                Map.of())));
         when(useCase.cancel(any())).thenReturn(Mono.just(new CancelInferenceResult(
                 requestId,
                 conversationId,

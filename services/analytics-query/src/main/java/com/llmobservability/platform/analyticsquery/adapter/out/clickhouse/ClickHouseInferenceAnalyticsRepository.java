@@ -81,14 +81,14 @@ class ClickHouseInferenceAnalyticsRepository implements InferenceAnalyticsReposi
                             tuple.getT6().stream().map(this::toErrorBreakdown).toList(),
                             false);
                 })
-                .onErrorMap(error -> new ApplicationException("ANALYTICS_QUERY_FAILED", HttpStatus.INTERNAL_SERVER_ERROR, "ClickHouse analytics query failed"));
+                .onErrorMap(error -> new ApplicationException("ANALYTICS_QUERY_FAILED", HttpStatus.INTERNAL_SERVER_ERROR, "Analytics summary query failed"));
     }
 
     @Override
     public Flux<InferenceRequestRow> searchRequests(AnalyticsFilter filter, String decodedCursor, int limit) {
         return queryMany(requestSearchSql(filter, decodedCursor, limit))
                 .map(this::toRequestRow)
-                .onErrorMap(error -> new ApplicationException("ANALYTICS_QUERY_FAILED", HttpStatus.INTERNAL_SERVER_ERROR, "ClickHouse request search failed"));
+                .onErrorMap(error -> new ApplicationException("ANALYTICS_QUERY_FAILED", HttpStatus.INTERNAL_SERVER_ERROR, "Analytics request search failed"));
     }
 
     @Override
@@ -98,7 +98,7 @@ class ClickHouseInferenceAnalyticsRepository implements InferenceAnalyticsReposi
                 .collectList()
                 .filter(rows -> !rows.isEmpty())
                 .map(rows -> toRequestDetail(filter, rows))
-                .onErrorMap(error -> error instanceof ApplicationException ? error : new ApplicationException("ANALYTICS_QUERY_FAILED", HttpStatus.INTERNAL_SERVER_ERROR, "ClickHouse request detail query failed"));
+                .onErrorMap(error -> error instanceof ApplicationException ? error : new ApplicationException("ANALYTICS_QUERY_FAILED", HttpStatus.INTERNAL_SERVER_ERROR, "Analytics request detail query failed"));
     }
 
     private Mono<JsonNode> queryOne(String sql) {
@@ -211,7 +211,7 @@ class ClickHouseInferenceAnalyticsRepository implements InferenceAnalyticsReposi
                 """.formatted(table, where(filter));
     }
 
-    private String requestSearchSql(AnalyticsFilter filter, String decodedCursor, int limit) {
+    String requestSearchSql(AnalyticsFilter filter, String decodedCursor, int limit) {
         String having = searchHaving(filter, decodedCursor);
         return """
                 SELECT
@@ -230,13 +230,13 @@ class ClickHouseInferenceAnalyticsRepository implements InferenceAnalyticsReposi
                   argMax(failure_stage, occurred_at) AS failure_stage,
                   any(correlation_id) AS correlation_id,
                   any(traceparent) AS traceparent
-                FROM %s
+                FROM %s AS lifecycle
                 WHERE %s
                 GROUP BY request_id
                 %s
                 ORDER BY completed_at DESC, request_id DESC
                 LIMIT %d
-                """.formatted(table, where(filter, false), having, limit);
+                """.formatted(table, where(filter, false, "lifecycle"), having, limit);
     }
 
     private String requestDetailSql(AnalyticsFilter filter, UUID requestId) {
@@ -276,24 +276,32 @@ class ClickHouseInferenceAnalyticsRepository implements InferenceAnalyticsReposi
     }
 
     private String where(AnalyticsFilter filter, boolean includeAggregateFilters) {
+        return where(filter, includeAggregateFilters, null);
+    }
+
+    private String where(AnalyticsFilter filter, boolean includeAggregateFilters, String qualifier) {
         List<String> clauses = new ArrayList<>();
-        clauses.add("tenant_id = " + sqlString(filter.tenantId()));
-        clauses.add("project_id = " + sqlString(filter.projectId()));
-        clauses.add("occurred_at >= parseDateTime64BestEffort(" + sqlString(filter.from().toString()) + ")");
-        clauses.add("occurred_at < parseDateTime64BestEffort(" + sqlString(filter.to().toString()) + ")");
+        clauses.add(column(qualifier, "tenant_id") + " = " + sqlString(filter.tenantId()));
+        clauses.add(column(qualifier, "project_id") + " = " + sqlString(filter.projectId()));
+        clauses.add(column(qualifier, "occurred_at") + " >= parseDateTime64BestEffort(" + sqlString(filter.from().toString()) + ")");
+        clauses.add(column(qualifier, "occurred_at") + " < parseDateTime64BestEffort(" + sqlString(filter.to().toString()) + ")");
         if (filter.provider() != null) {
-            clauses.add("provider = " + sqlString(filter.provider()));
+            clauses.add(column(qualifier, "provider") + " = " + sqlString(filter.provider()));
         }
         if (filter.model() != null) {
-            clauses.add("model = " + sqlString(filter.model()));
+            clauses.add(column(qualifier, "model") + " = " + sqlString(filter.model()));
         }
         if (includeAggregateFilters && filter.status() != null) {
-            clauses.add("status = " + sqlString(filter.status()));
+            clauses.add(column(qualifier, "status") + " = " + sqlString(filter.status()));
         }
         if (includeAggregateFilters && filter.errorCode() != null) {
-            clauses.add("error_code = " + sqlString(filter.errorCode()));
+            clauses.add(column(qualifier, "error_code") + " = " + sqlString(filter.errorCode()));
         }
         return String.join(" AND ", clauses);
+    }
+
+    private String column(String qualifier, String name) {
+        return qualifier == null ? name : qualifier + "." + name;
     }
 
     private String searchHaving(AnalyticsFilter filter, String decodedCursor) {
