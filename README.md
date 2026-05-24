@@ -290,6 +290,8 @@ The platform uses a `ProviderClient` port and a `ProviderClientRegistry` so doma
 | `gemini` | `GeminiProviderClient` | As seeded in `model_catalog` |
 | `openai` | `OpenAiProviderClient` | `gpt-5.5`, `gpt-5.4` |
 
+Live provider validation has been completed with Gemini. OpenAI adapter implementation exists, but live OpenAI provider testing is still pending.
+
 OpenAI uses the Responses API (`POST /v1/responses`, `stream: true`). OpenAI provider-native cancellation is deferred; cancellation is best-effort through stream disposal.
 
 The model catalog is queryable via `GET /v1/models`.
