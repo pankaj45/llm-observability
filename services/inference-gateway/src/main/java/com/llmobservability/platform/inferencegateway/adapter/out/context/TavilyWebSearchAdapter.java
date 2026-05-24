@@ -8,6 +8,9 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
+import io.netty.channel.ChannelOption;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
+import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -23,7 +26,13 @@ class TavilyWebSearchAdapter implements WebSearchPort {
     private final ContextOrchestratorProperties properties;
 
     TavilyWebSearchAdapter(WebClient.Builder webClientBuilder, ContextOrchestratorProperties properties) {
-        this.webClient = webClientBuilder.baseUrl(properties.getTavily().getBaseUrl()).build();
+        HttpClient httpClient = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000)
+                .responseTimeout(Duration.ofSeconds(5));
+        this.webClient = webClientBuilder.clone()
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .baseUrl(properties.getTavily().getBaseUrl())
+                .build();
         this.properties = properties;
     }
 

@@ -5,6 +5,14 @@ spring:
     url: ${SPRING_R2DBC_URL:r2dbc:postgresql://localhost:5432/llm_observability}
     username: ${SPRING_R2DBC_USERNAME:llm_observability}
     password: ${SPRING_R2DBC_PASSWORD:llm_observability}
+    pool:
+      initial-size: 5
+      max-size: 20
+      max-life-time: PT10M
+      max-idle-time: PT5M
+    properties:
+      connectTimeout: PT5S
+      statementTimeout: 10s
   flyway:
     enabled: ${SPRING_FLYWAY_ENABLED:false}
     url: ${SPRING_FLYWAY_URL:jdbc:postgresql://localhost:5432/llm_observability}

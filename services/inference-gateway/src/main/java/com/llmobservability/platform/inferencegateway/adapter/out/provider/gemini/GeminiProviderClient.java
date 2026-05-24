@@ -14,6 +14,10 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import io.netty.channel.ChannelOption;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
+import reactor.netty.http.client.HttpClient;
+import java.time.Duration;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -30,7 +34,13 @@ class GeminiProviderClient implements ProviderClient {
     private final GeminiProperties properties;
 
     GeminiProviderClient(WebClient.Builder webClientBuilder, ObjectMapper objectMapper, GeminiProperties properties) {
-        this.webClient = webClientBuilder.baseUrl(properties.baseUrl()).build();
+        HttpClient httpClient = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000)
+                .responseTimeout(Duration.ofSeconds(30));
+        this.webClient = webClientBuilder.clone()
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .baseUrl(properties.baseUrl())
+                .build();
         this.objectMapper = objectMapper;
         this.properties = properties;
     }
@@ -60,6 +70,7 @@ class GeminiProviderClient implements ProviderClient {
                 .bodyValue(toGeminiRequest(request))
                 .retrieve()
                 .bodyToFlux(String.class)
+                .timeout(Duration.ofSeconds(30))
                 .doOnSubscribe(subscription -> log.debug(
                         "Starting Gemini stream provider=gemini model={} messageCount={}",
                         request.model(),
