@@ -23,7 +23,7 @@ as the root page (`/`) of `apps/web` and relocates the operator analytics dashbo
 - Resume a conversation by selecting it in the sidebar and loading its history from
   `GET /v1/conversations/{id}/messages`.
 - Stop button during active streaming that calls `DELETE /v1/conversations/{id}/stream`.
-- Model selector (Gemini model variants); provider is always `gemini`.
+- Model selector populated from the backend catalog with provider/model pairs.
 - Settings panel for `tenantId` and `projectId` with hardcoded defaults, persisted to
   `localStorage`.
 - Relocation of the analytics dashboard to `apps/web/app/analytics/`.
@@ -47,8 +47,8 @@ See ADR-0017 for the full decision record. Summary:
 
 1. Chatbot UI lives at `/`; analytics at `/analytics`. Evaluated alternatives are documented in
    ADR-0017.
-2. Model selector shows Gemini model variants; provider is always `gemini` because the
-   `InferenceStreamRequest` contract uses `const: gemini`.
+2. Model selector is populated from the backend catalog and sends the provider/model pair
+   selected by the user.
 3. Conversation resume loads full message history from
    `GET /v1/conversations/{id}/messages` on sidebar selection.
 4. Tenant and project IDs default to `tenant-a` / `project-a` with a collapsible settings

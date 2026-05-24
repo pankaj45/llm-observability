@@ -83,6 +83,7 @@ make down               # stop local dependencies
 ## Phase 2 Inference Gateway
 
 - Set `GEMINI_API_KEY` in the shell before starting Compose if live Gemini calls are required.
+- Set `OPENAI_API_KEY` in the shell before starting Compose if live OpenAI calls are required. Optional `OPENAI_ORGANIZATION` and `OPENAI_PROJECT` values are forwarded to the OpenAI adapter when present.
 - Docker Compose wires the inference gateway to PostgreSQL, Redis, Kafka, and the OpenTelemetry collector.
 - `POST /v1/inference/stream` rejects request bodies with `conversationId`; the gateway always creates the conversation id and title.
 - Kafka lifecycle publishing is enabled in Compose through `INFERENCE_KAFKA_ENABLED=true`.

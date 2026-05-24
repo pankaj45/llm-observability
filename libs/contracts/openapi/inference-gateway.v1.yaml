@@ -154,10 +154,14 @@ components:
           minLength: 1
         provider:
           type: string
-          const: gemini
+          enum:
+            - gemini
+            - openai
+          example: openai
         model:
           type: string
           minLength: 1
+          example: gpt-5.5
         messages:
           type: array
           minItems: 1
@@ -198,10 +202,14 @@ components:
           minLength: 1
         provider:
           type: string
-          const: gemini
+          enum:
+            - gemini
+            - openai
+          example: openai
         model:
           type: string
           minLength: 1
+          example: gpt-5.5
         messages:
           type: array
           minItems: 1

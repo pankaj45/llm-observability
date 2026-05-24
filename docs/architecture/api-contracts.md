@@ -202,6 +202,7 @@ Required analytics behavior:
 ## Validation Requirements
 
 - Provider and model must be supported for the tenant/project.
+- Phase 2 supports `gemini` and `openai`; OpenAI catalog entries include `gpt-5.5` and `gpt-5.4`.
 - Message roles and content blocks must match the provider-normalized schema.
 - Token, timeout, and temperature parameters must be bounded.
 - Metadata keys and values must have size limits.

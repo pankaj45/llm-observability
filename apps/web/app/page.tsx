@@ -32,7 +32,6 @@ const INFERENCE_BASE =
 
 const DEFAULT_TENANT = "tenant-a";
 const DEFAULT_PROJECT = "project-a";
-const PROVIDER = "gemini";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -156,7 +155,7 @@ export default function ChatPage() {
 
   // ── input ──
   const [input, setInput] = useState("");
-  const [model, setModel] = useState("");
+  const [modelSelection, setModelSelection] = useState("");
   const [modelOptions, setModelOptions] = useState<{ value: string; label: string; group?: string }[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -202,7 +201,7 @@ export default function ChatPage() {
       const options = body.providers.map((p) => ({
         group: p.name,
         items: p.models.map((m) => ({
-          value: m.id,
+          value: `${p.id}:${m.id}`,
           label: m.name,
         }))
       }));
@@ -210,10 +209,10 @@ export default function ChatPage() {
       setModelOptions(options as any);
       
       // Default to the first available model if none selected
-      if (options.length > 0 && !model) {
+      if (options.length > 0 && !modelSelection) {
         const allItems = options.flatMap(o => o.items);
         const defaultOpt = allItems.find(o => o.value.includes('flash')) ?? allItems[0];
-        if (defaultOpt) setModel(defaultOpt.value);
+        if (defaultOpt) setModelSelection(defaultOpt.value);
       }
     } catch (err) {
       console.error("Failed to load model catalog:", err);
@@ -285,7 +284,8 @@ export default function ChatPage() {
 
   async function handleSend() {
     const text = input.trim();
-    if (!text || streaming) return;
+    const [provider, model] = modelSelection.split(":", 2);
+    if (!text || streaming || !provider || !model) return;
 
     setSendError(null);
     setInput("");
@@ -325,7 +325,7 @@ export default function ChatPage() {
         body = {
           tenantId,
           projectId,
-          provider: PROVIDER,
+          provider,
           model,
           messages: [{ role: "user", content: text }],
           parameters: {},
@@ -337,7 +337,7 @@ export default function ChatPage() {
         body = {
           tenantId,
           projectId,
-          provider: PROVIDER,
+          provider,
           model,
           messages: [{ role: "user", content: text }],
           parameters: {},
@@ -713,10 +713,10 @@ export default function ChatPage() {
                 <Select
                   id="model-select"
                   data={modelOptions}
-                  value={model}
-                  onChange={(v) => { if (v) setModel(v); }}
+                  value={modelSelection}
+                  onChange={(v) => { if (v) setModelSelection(v); }}
                   size="sm"
-                  w={170}
+                  w={190}
                   disabled={streaming || modelOptions.length === 0}
                   radius="md"
                 />
@@ -737,7 +737,7 @@ export default function ChatPage() {
                     id="send-btn"
                     leftSection={<IconSend size={15} />}
                     onClick={() => void handleSend()}
-                    disabled={!input.trim()}
+                    disabled={!input.trim() || !modelSelection}
                     radius="md"
                     size="sm"
                   >

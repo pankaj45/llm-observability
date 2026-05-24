@@ -78,6 +78,12 @@ llm-observability:
     api-key: ${GEMINI_API_KEY:}
     base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
     default-model: ${GEMINI_DEFAULT_MODEL:gemini-2.5-flash}
+  openai:
+    api-key: ${OPENAI_API_KEY:}
+    base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+    organization: ${OPENAI_ORGANIZATION:}
+    project: ${OPENAI_PROJECT:}
+    default-model: ${OPENAI_DEFAULT_MODEL:gpt-5.5}
   kafka:
     enabled: ${INFERENCE_KAFKA_ENABLED:false}
     lifecycle-topic: ${INFERENCE_LIFECYCLE_TOPIC:inference.lifecycle.v1}

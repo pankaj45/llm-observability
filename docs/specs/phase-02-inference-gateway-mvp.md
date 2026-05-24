@@ -11,6 +11,7 @@ Implemented:
 - Backend-owned UUID conversation creation and title generation.
 - Rejection of client-supplied `conversationId` in stream requests.
 - Gemini provider adapter through the provider port.
+- OpenAI provider adapter through the provider port using the Responses API and the latest two configured frontier models, `gpt-5.5` and `gpt-5.4`.
 - Redis active stream and cancellation state.
 - Kafka lifecycle event publisher for requested, completed, cancelled, and failed events.
 - Flyway migration for the approved phase 2 PostgreSQL entity set.
@@ -27,7 +28,7 @@ Deferred from runtime verification:
 ## Goals
 
 - Implement the first production-grade streaming inference API in `services/inference-gateway`.
-- Support one real LLM provider through the multi-provider adapter interface.
+- Support real LLM providers through the multi-provider adapter interface.
 - Stream normalized Server-Sent Events to clients.
 - Support cancellation for active inference requests.
 - Emit durable lifecycle events for observability and future ingestion.
@@ -41,7 +42,7 @@ Deferred from runtime verification:
 
 - WebFlux API implementation for streaming inference, request status, and cancellation.
 - OpenAPI v1 contract expansion for inference APIs.
-- Provider adapter port and first Gemini provider implementation.
+- Provider adapter port plus Gemini and OpenAI provider implementations.
 - Normalized provider request and response model.
 - SSE event model and heartbeat behavior.
 - Request validation and deterministic error envelope.
@@ -71,7 +72,7 @@ Deferred from runtime verification:
 
 ## Recommended Approach
 
-- Use Gemini as the first real provider.
+- Use Gemini as the first real provider and OpenAI as the second provider.
 - Require `tenantId` and `projectId`; do not accept `conversationId` in the `POST /v1/inference/stream` request body.
 - Create a UUID conversation for every new inference request.
 - Use `POST /v1/conversations/{conversationId}/messages/stream` for subsequent turns in an existing conversation; clients send only the new turn and the gateway loads prior persisted messages for provider context.
@@ -80,7 +81,7 @@ Deferred from runtime verification:
 - Protect persisted content with access-control, retention, and redaction rules. Do not log raw content, use raw content as metric labels, or publish raw content to Kafka by default.
 - Publish lifecycle events for requested, completed, cancelled, and failed. Do not publish every token chunk by default in phase 2.
 - Use Redis for active stream tracking, cancellation coordination, and short-lived stream state.
-- Implement provider credentials through environment variables for phase 2 local/staging, with an ADR required before tenant-scoped secret storage.
+- Implement provider credentials through environment variables for phase 2 local/staging, with an ADR required before tenant-scoped secret storage. Use `GEMINI_API_KEY` for Gemini and `OPENAI_API_KEY` for OpenAI.
 
 ## Architecture Decisions
 
@@ -95,6 +96,7 @@ New phase 2 decision:
 
 - [ADR-0011: Inference Gateway Request Lifecycle Ownership](../adr/ADR-0011-inference-gateway-request-lifecycle-ownership.md)
 - [ADR-0012: Phase 2 Gemini, Conversation Content, and Redis Decisions](../adr/ADR-0012-phase-02-gemini-conversation-content-and-redis.md)
+- [ADR-0020: OpenAI Provider Adapter and Model Catalog](../adr/ADR-0020-openai-provider-adapter-and-model-catalog.md)
 
 ## API Contract
 

@@ -30,12 +30,10 @@ base defaults to `/analytics/api`, while the Next.js server forwards to
 requests while preserving the analytics-query service as the owner of the `/v1/analytics/*`
 contract.
 
-### 2. Model selector; provider fixed to `gemini`
+### 2. Model selector from backend catalog
 
-The UI shows a model dropdown (`gemini-1.5-pro`, `gemini-1.5-flash`). The provider is always
-sent as `gemini` because the `InferenceStreamRequest` OpenAPI contract uses `const: gemini`.
-This reflects the current platform capability and keeps the UI honest about what the backend
-actually supports.
+The UI shows a model dropdown populated from the inference gateway catalog. Each option carries
+both the provider key and model key so the request matches the selected backend capability.
 
 ### 3. `fetch` + `ReadableStream` for SSE — not `EventSource`
 
@@ -121,7 +119,7 @@ match the analytics dashboard UX.
 - The chatbot requires `NEXT_PUBLIC_INFERENCE_API_BASE` (default: `http://localhost:8080`).
 - The analytics dashboard uses `NEXT_PUBLIC_ANALYTICS_API_BASE` (default: `/analytics/api`)
   plus server-side `ANALYTICS_API_INTERNAL_BASE` for deployments.
-- Any future addition of a second provider requires updating the model dropdown and relaxing
-  the `const: gemini` constraint in the OpenAPI contract and the backend validator.
+- Provider additions require catalog metadata and adapter support; the chatbot model dropdown
+  can consume new provider/model pairs without hardcoded provider changes.
 - Authentication work (Phase 6) must replace the hardcoded tenant/project with JWT-derived
   values; the settings panel becomes optional for privileged operator access only.
