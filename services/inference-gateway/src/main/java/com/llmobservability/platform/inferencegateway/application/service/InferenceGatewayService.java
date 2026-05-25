@@ -725,7 +725,8 @@ public class InferenceGatewayService implements InferenceGatewayUseCase {
                 .thenMany(Flux.just(event(StreamEventType.REQUEST_FAILED, request, sequence.incrementAndGet(), traceId, Map.of(
                         "status", InferenceStatus.FAILED.name(),
                         "errorCode", exception.errorCode().code(),
-                        "message", exception.getMessage()))))
+                        "message", exception.getMessage(),
+                        "retryable", exception.retryable()))))
                 .onErrorResume(TerminalTransitionSkippedException.class, ignored -> Flux.empty());
     }
 

@@ -19,6 +19,7 @@ import {
   IconSend,
   IconSettings,
   IconPlus,
+  IconRefresh,
 } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -44,6 +45,8 @@ interface ChatMessage {
   status: MessageStatus;
   tokenCount?: number;
   errorCode?: string;
+  errorMessage?: string;
+  retryable?: boolean;
   toolStatus?: string;
   sources?: ChatSource[];
 }
@@ -88,6 +91,22 @@ interface ModelCatalogResponse {
       supportsCancellation: boolean;
     }>;
   }>;
+}
+
+// ─── Error code → user-facing message ────────────────────────────────────────
+
+const USER_FACING_ERRORS: Record<string, string> = {
+  "provider.rate_limited":       "Too many requests — please wait a moment and try again.",
+  "provider.timeout":            "The AI provider took too long to respond.",
+  "provider.unavailable":        "AI provider is temporarily unavailable.",
+  "provider.unsupported":        "This model is no longer available.",
+  "validation.invalid_request":  "Your request could not be processed.",
+  "stream.cancelled":            "Request was cancelled.",
+  "NETWORK_ERROR":               "Connection lost. Check your network and try again.",
+};
+
+function userFacingError(code: string): string {
+  return USER_FACING_ERRORS[code] ?? "Something went wrong. Please try again.";
 }
 
 // ─── SSE helpers ─────────────────────────────────────────────────────────────
@@ -163,6 +182,8 @@ export default function ChatPage() {
   // ── internals ──
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const lastUserMsgIdRef = useRef<string>("");
+  const lastSentTextRef = useRef<string>("");
 
   // ── hydrate settings from localStorage ──
   useEffect(() => {
@@ -282,16 +303,16 @@ export default function ChatPage() {
 
   // ─── Send message ────────────────────────────────────────────────────────────
 
-  async function handleSend() {
-    const text = input.trim();
+  async function sendMessage(text: string) {
     const [provider, model] = modelSelection.split(":", 2);
-    if (!text || streaming || !provider || !model) return;
+    if (!provider || !model) return;
 
     setSendError(null);
-    setInput("");
 
     // Append user message immediately
     const userMsgId = crypto.randomUUID();
+    lastUserMsgIdRef.current = userMsgId;
+    lastSentTextRef.current = text;
     const userMsg: ChatMessage = {
       id: userMsgId,
       role: "user",
@@ -468,11 +489,15 @@ export default function ChatPage() {
           }
 
           if (event === "request.failed") {
-            const errorCode =
-              typeof data.errorCode === "string" ? data.errorCode : "UNKNOWN_ERROR";
+            const errorCode = typeof data.errorCode === "string" ? data.errorCode : "UNKNOWN_ERROR";
+            const errorMessage = typeof data.message === "string" ? data.message : undefined;
+            const retryable = typeof data.retryable === "boolean" ? data.retryable : false;
+            if (process.env.NODE_ENV !== "production") {
+              console.error("[stream] request.failed", { errorCode, errorMessage, retryable });
+            }
             setMessages((prev) =>
               prev.map((m) =>
-                m.id === assistantMsgId ? { ...m, status: "failed", errorCode } : m
+                m.id === assistantMsgId ? { ...m, status: "failed", errorCode, errorMessage, retryable } : m
               )
             );
           }
@@ -485,7 +510,9 @@ export default function ChatPage() {
         setSendError(err instanceof Error ? err.message : "Failed to send message");
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === assistantMsgId ? { ...m, status: "failed", errorCode: "NETWORK_ERROR" } : m
+            m.id === assistantMsgId
+              ? { ...m, status: "failed", errorCode: "NETWORK_ERROR", retryable: true }
+              : m
           )
         );
       }
@@ -495,6 +522,21 @@ export default function ChatPage() {
       // Refresh conversation list to show new/updated conversation
       void loadConversations();
     }
+  }
+
+  async function handleSend() {
+    const text = input.trim();
+    if (!text || streaming) return;
+    setInput("");
+    await sendMessage(text);
+  }
+
+  async function handleRetry(failedAssistantMsgId: string) {
+    if (streaming || !lastSentTextRef.current) return;
+    setMessages((prev) =>
+      prev.filter((m) => m.id !== failedAssistantMsgId && m.id !== lastUserMsgIdRef.current)
+    );
+    await sendMessage(lastSentTextRef.current);
   }
 
   // ─── Stop active stream ──────────────────────────────────────────────────────
@@ -680,7 +722,15 @@ export default function ChatPage() {
               </div>
             )}
             {messages.map((msg) => (
-              <MessageBubble key={msg.id} msg={msg} />
+              <MessageBubble
+                key={msg.id}
+                msg={msg}
+                onRetry={
+                  msg.status === "failed" && msg.retryable
+                    ? () => { void handleRetry(msg.id); }
+                    : undefined
+                }
+              />
             ))}
             <div ref={messagesEndRef} />
           </div>
@@ -755,7 +805,7 @@ export default function ChatPage() {
 
 // ─── Message bubble sub-component ─────────────────────────────────────────────
 
-function MessageBubble({ msg }: { msg: ChatMessage }) {
+function MessageBubble({ msg, onRetry }: { msg: ChatMessage; onRetry?: () => void }) {
   const isUser = msg.role === "user";
   const isStreaming = msg.status === "streaming";
   const isCancelled = msg.status === "cancelled";
@@ -806,9 +856,20 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
               </Badge>
             )}
             {isFailed && (
-              <Badge color="red" variant="light" size="xs">
-                {msg.errorCode ?? "Failed"}
-              </Badge>
+              <>
+                {process.env.NODE_ENV !== "production" && msg.errorCode && (
+                  <span className={styles.errorCodeDev}>{msg.errorCode}</span>
+                )}
+                <Badge color="red" variant="light" size="xs">
+                  {userFacingError(msg.errorCode ?? "UNKNOWN_ERROR")}
+                </Badge>
+                {onRetry && (
+                  <button className={styles.retryButton} onClick={onRetry}>
+                    <IconRefresh size={11} />
+                    Try again
+                  </button>
+                )}
+              </>
             )}
           </div>
         )}
